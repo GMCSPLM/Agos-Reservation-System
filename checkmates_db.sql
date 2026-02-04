@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Feb 03, 2026 at 02:57 PM
+-- Generation Time: Feb 04, 2026 at 08:24 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -157,7 +157,9 @@ CREATE TABLE `reservations` (
 --
 
 INSERT INTO `reservations` (`reservation_id`, `customer_id`, `branch_id`, `reservation_date`, `reservation_type`, `total_amount`, `status`) VALUES
-(1, 7, 1, '2026-02-05', 'Day', 5000.00, 'Confirmed');
+(1, 7, 1, '2026-02-05', 'Day', 5000.00, 'Confirmed'),
+(2, 7, 1, '2026-02-05', 'Day', 5000.00, 'Confirmed'),
+(3, 7, 4, '2026-02-05', 'Overnight', 10000.00, 'Confirmed');
 
 -- --------------------------------------------------------
 
@@ -278,7 +280,7 @@ ALTER TABLE `feedback`
 -- AUTO_INCREMENT for table `reservations`
 --
 ALTER TABLE `reservations`
-  MODIFY `reservation_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `reservation_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT for table `users`
