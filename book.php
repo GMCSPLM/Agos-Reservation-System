@@ -30,8 +30,7 @@ $branches = $pdo->query("SELECT * FROM branches")->fetchAll();
                 <div class="form-group">
                     <label>Tour Type</label>
                     <select name="type">
-                        <option value="Day">Day Tour (₱5,000)</option>
-                        <option value="Night">Night Tour (₱6,000)</option>
+                        <option value="Day">Day Tour (₱9,000)</option>
                         <option value="Overnight">Overnight (₱10,000)</option>
                     </select>
                 </div>

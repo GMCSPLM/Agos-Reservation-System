@@ -11,11 +11,77 @@ if (isset($_GET['approve'])) {
     exit;
 }
 
+if (isset($_GET['reject'])) {
+    $pdo->prepare("UPDATE reservations SET status='Cancelled' WHERE reservation_id=?")->execute([$_GET['reject']]);
+    header("Location: dashboard.php");
+    exit;
+}
+
 $view = $_GET['view'] ?? 'dashboard';
 
+// Fetch analytics data
+$stats = [];
+
+// Overview stats
+$stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending'")->fetchColumn();
+$stats['todays_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
+$stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE())")->fetchColumn();
+$stats['this_month_revenue'] = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
+$stats['total_customers'] = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
+$stats['avg_rating'] = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = MONTH(CURDATE())")->fetchColumn();
+
+// Monthly booking trends (last 12 months)
+$monthly_query = "
+    SELECT 
+        DATE_FORMAT(reservation_date, '%Y-%m') as month,
+        DATE_FORMAT(reservation_date, '%b %Y') as month_label,
+        COUNT(*) as total_bookings,
+        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN 1 ELSE 0 END) as successful_bookings,
+        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN total_amount ELSE 0 END) as revenue
+    FROM reservations
+    WHERE reservation_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    GROUP BY DATE_FORMAT(reservation_date, '%Y-%m'), DATE_FORMAT(reservation_date, '%b %Y')
+    ORDER BY month ASC
+";
+$monthly_data = $pdo->query($monthly_query)->fetchAll(PDO::FETCH_ASSOC);
+
+// Branch performance
+$branch_query = "
+    SELECT 
+        b.branch_id,
+        b.branch_name,
+        COUNT(r.reservation_id) as total_reservations,
+        SUM(CASE WHEN r.status = 'Confirmed' THEN 1 ELSE 0 END) as confirmed_count,
+        SUM(CASE WHEN r.status = 'Completed' THEN 1 ELSE 0 END) as completed_count,
+        COALESCE(SUM(r.total_amount), 0) as total_revenue,
+        COALESCE(AVG(r.total_amount), 0) as avg_revenue_per_booking,
+        COALESCE(AVG(f.rating), 0) as avg_rating
+    FROM branches b
+    LEFT JOIN reservations r ON b.branch_id = r.branch_id
+    LEFT JOIN feedback f ON r.reservation_id = f.reservation_id
+    GROUP BY b.branch_id, b.branch_name
+    ORDER BY total_revenue DESC
+";
+$branch_stats = $pdo->query($branch_query)->fetchAll(PDO::FETCH_ASSOC);
+
+// Reservation type distribution
+$type_query = "
+    SELECT 
+        reservation_type,
+        COUNT(*) as count,
+        SUM(total_amount) as revenue
+    FROM reservations
+    WHERE status IN ('Confirmed', 'Completed')
+    GROUP BY reservation_type
+";
+$reservation_types = $pdo->query($type_query)->fetchAll(PDO::FETCH_ASSOC);
+
+// Get data for current view
 if ($view === 'customers') {
     $data = $pdo->query("SELECT * FROM customers ORDER BY customer_id DESC")->fetchAll();
     $pageTitle = "Registered Customers";
+} elseif ($view === 'analytics') {
+    $pageTitle = "Booking Analytics";
 } else {
     $data = $pdo->query("SELECT r.*, c.full_name, b.branch_name 
                          FROM reservations r 
@@ -33,6 +99,7 @@ if ($view === 'customers') {
     <title>Admin Panel | CheckMates</title>
     <link rel="stylesheet" href="../css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             background: linear-gradient(rgba(0, 119, 182, 0.1), rgba(0, 119, 182, 0.1)), 
@@ -117,6 +184,7 @@ if ($view === 'customers') {
             box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
             border: 1px solid rgba(255, 255, 255, 0.4);
             animation: fadeIn 0.5s ease-out;
+            margin-bottom: 2rem;
         }
 
         h1 {
@@ -125,6 +193,108 @@ if ($view === 'customers') {
             font-size: 2rem;
         }
 
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+        }
+
+        .stat-card h3 {
+            color: #7f8c8d;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+        }
+
+        .stat-card .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 0.3rem;
+        }
+
+        .stat-card .stat-label {
+            color: #95a5a6;
+            font-size: 0.8rem;
+        }
+
+        .stat-card.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .stat-card.primary h3,
+        .stat-card.primary .stat-value,
+        .stat-card.primary .stat-label {
+            color: white;
+        }
+
+        .stat-card.success {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .stat-card.success h3,
+        .stat-card.success .stat-value,
+        .stat-card.success .stat-label {
+            color: white;
+        }
+
+        .stat-card.info {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .stat-card.info h3,
+        .stat-card.info .stat-value,
+        .stat-card.info .stat-label {
+            color: white;
+        }
+
+        /* Charts */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .chart-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+
+        .chart-card h2 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        /* Tables */
         table {
             width: 100%;
             border-collapse: separate;
@@ -138,12 +308,10 @@ if ($view === 'customers') {
             padding: 15px;
             text-align: left;
             font-weight: 600;
-            border-radius: 8px 8px 0 0;
         }
         
         th:first-child { border-top-left-radius: 8px; }
-        th:last-child { border-top-right-radius: 8px; border-radius: 0 8px 0 0; }
-        th:only-child { border-radius: 8px 8px 0 0; }
+        th:last-child { border-top-right-radius: 8px; }
 
         td {
             padding: 15px;
@@ -161,9 +329,10 @@ if ($view === 'customers') {
             font-size: 0.85rem;
             font-weight: 600;
         }
-        .status.confirmed { background: #d4edda; color: #155724; }
-        .status.pending { background: #fff3cd; color: #856404; }
-        .status.cancelled { background: #f8d7da; color: #721c24; }
+        .status.confirmed  { background: #d4edda; color: #155724; }
+        .status.pending    { background: #fff3cd; color: #856404; }
+        .status.cancelled  { background: #f8d7da; color: #721c24; }
+        .status.completed  { background: #cce5ff; color: #004085; }
 
         .btn-action {
             text-decoration: none;
@@ -174,10 +343,31 @@ if ($view === 'customers') {
             transition: 0.2s;
             background: var(--primary);
             color: white;
+            display: inline-block;
+            white-space: nowrap;
         }
         .btn-action:hover {
-            background: var(--primary-dark);
+            filter: brightness(1.15);
             transform: scale(1.05);
+        }
+        .btn-action.btn-reject {
+            background: #ef476f;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: nowrap;
+        }
+
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -194,6 +384,11 @@ if ($view === 'customers') {
                 </a>
             </li>
             <li>
+                <a href="dashboard.php?view=analytics" class="<?= $view === 'analytics' ? 'active' : '' ?>">
+                    <i class="fas fa-chart-line"></i> Analytics
+                </a>
+            </li>
+            <li>
                 <a href="dashboard.php?view=customers" class="<?= $view === 'customers' ? 'active' : '' ?>">
                     <i class="fas fa-users"></i> Customers
                 </a>
@@ -207,12 +402,216 @@ if ($view === 'customers') {
     </nav>
 
     <div class="main-content">
-        <div class="glass-panel">
-            <h1><?= $pageTitle ?></h1>
-            
-            <div style="overflow-x: auto;">
-                <table>
-                    <?php if ($view === 'customers'): ?>
+        <?php if ($view === 'analytics'): ?>
+            <!-- Analytics View -->
+            <div class="glass-panel">
+                <h1>📊 <?= $pageTitle ?></h1>
+                <p style="color: #7f8c8d; margin-bottom: 2rem;">Comprehensive booking insights and performance metrics</p>
+                
+                <!-- Statistics Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card primary">
+                        <h3>Pending Reservations</h3>
+                        <div class="stat-value"><?= $stats['pending_reservations'] ?></div>
+                        <div class="stat-label">Awaiting confirmation</div>
+                    </div>
+
+                    <div class="stat-card success">
+                        <h3>Today's Bookings</h3>
+                        <div class="stat-value"><?= $stats['todays_reservations'] ?></div>
+                        <div class="stat-label">Confirmed for today</div>
+                    </div>
+
+                    <div class="stat-card info">
+                        <h3>This Month</h3>
+                        <div class="stat-value"><?= $stats['this_month_bookings'] ?></div>
+                        <div class="stat-label">Total bookings</div>
+                    </div>
+
+                    <div class="stat-card">
+                        <h3>Revenue (This Month)</h3>
+                        <div class="stat-value">₱<?= number_format($stats['this_month_revenue'], 0) ?></div>
+                        <div class="stat-label">Confirmed revenue</div>
+                    </div>
+
+                    <div class="stat-card">
+                        <h3>Total Customers</h3>
+                        <div class="stat-value"><?= $stats['total_customers'] ?></div>
+                        <div class="stat-label">Registered users</div>
+                    </div>
+
+                    <div class="stat-card">
+                        <h3>Avg Rating</h3>
+                        <div class="stat-value"><?= number_format($stats['avg_rating'], 1) ?> ⭐</div>
+                        <div class="stat-label">This month</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid">
+                <!-- Monthly Bookings Trend -->
+                <div class="chart-card">
+                    <h2>📈 Monthly Booking Trends (Last 12 Months)</h2>
+                    <div class="chart-container">
+                        <canvas id="monthlyBookingsChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Reservation Type Distribution -->
+                <div class="chart-card">
+                    <h2>📊 Reservation Type Distribution</h2>
+                    <div class="chart-container">
+                        <canvas id="reservationTypeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Revenue Chart -->
+            <div class="glass-panel">
+                <div class="chart-card" style="box-shadow: none; padding: 0;">
+                    <h2>💰 Monthly Revenue Trend</h2>
+                    <div class="chart-container" style="height: 350px;">
+                        <canvas id="revenueChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Branch Performance -->
+            <div class="glass-panel">
+                <h2 style="margin-bottom: 1rem;">🏢 Branch Performance</h2>
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Branch Name</th>
+                                <th>Total Reservations</th>
+                                <th>Confirmed</th>
+                                <th>Completed</th>
+                                <th>Total Revenue</th>
+                                <th>Avg Booking Value</th>
+                                <th>Rating</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($branch_stats as $branch): ?>
+                            <tr>
+                                <td><strong><?= htmlspecialchars($branch['branch_name']) ?></strong></td>
+                                <td><?= $branch['total_reservations'] ?></td>
+                                <td><?= $branch['confirmed_count'] ?></td>
+                                <td><?= $branch['completed_count'] ?></td>
+                                <td>₱<?= number_format($branch['total_revenue'], 2) ?></td>
+                                <td>₱<?= number_format($branch['avg_revenue_per_booking'], 2) ?></td>
+                                <td style="color: #f39c12;"><?= number_format($branch['avg_rating'], 1) ?> ⭐</td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    
+                    <?php if(empty($branch_stats)): ?>
+                        <p style="text-align:center; padding: 2rem; color: #888;">No branch data available.</p>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <script>
+                // Monthly Bookings Chart
+                const monthlyCtx = document.getElementById('monthlyBookingsChart').getContext('2d');
+                const monthlyData = <?= json_encode($monthly_data) ?>;
+                
+                new Chart(monthlyCtx, {
+                    type: 'line',
+                    data: {
+                        labels: monthlyData.map(d => d.month_label),
+                        datasets: [{
+                            label: 'Total Bookings',
+                            data: monthlyData.map(d => d.total_bookings),
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            borderWidth: 3
+                        }, {
+                            label: 'Successful Bookings',
+                            data: monthlyData.map(d => d.successful_bookings),
+                            borderColor: '#f5576c',
+                            backgroundColor: 'rgba(245, 87, 108, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            borderWidth: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { position: 'top' } },
+                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                    }
+                });
+
+                // Reservation Type Chart
+                const typeCtx = document.getElementById('reservationTypeChart').getContext('2d');
+                const typeData = <?= json_encode($reservation_types) ?>;
+                
+                new Chart(typeCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: typeData.map(d => d.reservation_type),
+                        datasets: [{
+                            data: typeData.map(d => d.count),
+                            backgroundColor: ['#667eea', '#f5576c', '#4ecdc4'],
+                            borderWidth: 3,
+                            borderColor: '#fff'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { position: 'bottom' } }
+                    }
+                });
+
+                // Revenue Chart
+                const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+                
+                new Chart(revenueCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: monthlyData.map(d => d.month_label),
+                        datasets: [{
+                            label: 'Revenue (₱)',
+                            data: monthlyData.map(d => d.revenue),
+                            backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                            borderColor: '#667eea',
+                            borderWidth: 2,
+                            borderRadius: 8
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return '₱' + value.toLocaleString();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            </script>
+
+        <?php elseif ($view === 'customers'): ?>
+            <!-- Customers View -->
+            <div class="glass-panel">
+                <h1><?= $pageTitle ?></h1>
+                
+                <div style="overflow-x: auto;">
+                    <table>
                         <thead>
                             <tr>
                                 <th>ID</th>
@@ -240,8 +639,21 @@ if ($view === 'customers') {
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
+                    </table>
+                    
+                    <?php if(empty($data)): ?>
+                        <p style="text-align:center; padding: 2rem; color: #888;">No customers found.</p>
+                    <?php endif; ?>
+                </div>
+            </div>
 
-                    <?php else: ?>
+        <?php else: ?>
+            <!-- Reservations View (Default) -->
+            <div class="glass-panel">
+                <h1><?= $pageTitle ?></h1>
+                
+                <div style="overflow-x: auto;">
+                    <table>
                         <thead>
                             <tr>
                                 <th>ID</th>
@@ -262,9 +674,11 @@ if ($view === 'customers') {
                                 <td>
                                     <?php 
                                         $statusClass = match($row['status']) {
-                                            'Confirmed' => 'confirmed',
-                                            'Pending' => 'pending',
-                                            default => 'cancelled'
+                                            'Confirmed'  => 'confirmed',
+                                            'Pending'    => 'pending',
+                                            'Completed'  => 'completed',
+                                            'Cancelled'  => 'cancelled',
+                                            default      => 'cancelled'
                                         };
                                     ?>
                                     <span class="status <?= $statusClass ?>">
@@ -272,25 +686,44 @@ if ($view === 'customers') {
                                     </span>
                                 </td>
                                 <td>
-                                    <?php if($row['status'] == 'Pending'): ?>
-                                        <a href="?approve=<?= $row['reservation_id'] ?>" class="btn-action">
-                                            <i class="fas fa-check"></i> Approve
-                                        </a>
+                                    <?php if($row['status'] === 'Pending'): ?>
+                                        <div class="action-buttons">
+                                            <a href="?approve=<?= $row['reservation_id'] ?>"
+                                               class="btn-action"
+                                               onclick="return confirm('Approve reservation #<?= $row['reservation_id'] ?>?')">
+                                                <i class="fas fa-check"></i> Approve
+                                            </a>
+                                            <a href="?reject=<?= $row['reservation_id'] ?>"
+                                               class="btn-action btn-reject"
+                                               onclick="return confirm('Reject reservation #<?= $row['reservation_id'] ?>? This cannot be undone.')">
+                                                <i class="fas fa-times"></i> Reject
+                                            </a>
+                                        </div>
+                                    <?php elseif($row['status'] === 'Confirmed'): ?>
+                                        <span style="color:#2ecc71; font-size:0.9rem;">
+                                            <i class="fas fa-check-circle"></i> Confirmed
+                                        </span>
+                                    <?php elseif($row['status'] === 'Completed'): ?>
+                                        <span style="color:#3498db; font-size:0.9rem;">
+                                            <i class="fas fa-flag-checkered"></i> Completed
+                                        </span>
                                     <?php else: ?>
-                                        <span style="color:#aaa; font-size:0.9rem;"><i class="fas fa-check-circle"></i> Done</span>
+                                        <span style="color:#e74c3c; font-size:0.9rem;">
+                                            <i class="fas fa-times-circle"></i> Cancelled
+                                        </span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
+                    </table>
+                    
+                    <?php if(empty($data)): ?>
+                        <p style="text-align:center; padding: 2rem; color: #888;">No reservations found.</p>
                     <?php endif; ?>
-                </table>
-                
-                <?php if(empty($data)): ?>
-                    <p style="text-align:center; padding: 2rem; color: #888;">No records found.</p>
-                <?php endif; ?>
+                </div>
             </div>
-        </div>
+        <?php endif; ?>
     </div>
 
 </body>
