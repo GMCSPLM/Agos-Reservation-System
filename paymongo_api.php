@@ -26,8 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]],
                 'payment_method_types' => ['card', 'gcash', 'paymaya'],
                 // {CHECKOUT_SESSION_ID} is replaced by PayMongo with the actual session ID
-                'success_url' => 'http://localhost/checkmates/success_handler.php?session_id={CHECKOUT_SESSION_ID}',
-                'cancel_url'  => 'http://localhost/checkmates/book.php'
+                'success_url' => 'http://localhost/AGOS-RESERVATION-SYSTEM/success_handler.php?session_id={CHECKOUT_SESSION_ID}',
+                'cancel_url'  => 'http://localhost/AGOS-RESERVATION-SYSTEM/book.php'
             ]
         ]
     ];

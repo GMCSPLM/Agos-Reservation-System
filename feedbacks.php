@@ -27,7 +27,7 @@ $feedbacks = $pdo->query("SELECT f.*, c.full_name FROM feedback f JOIN customers
 <style>
 /* Updated Background to Sea Image */
 .feedback-section-wrapper {
-    background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.3)), url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80');
+    background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.3)), url('Ripple-Effect.png');
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
