@@ -26,8 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]],
                 'payment_method_types' => ['card', 'gcash', 'paymaya'],
                 // {CHECKOUT_SESSION_ID} is replaced by PayMongo with the actual session ID
-                'success_url' => 'http://localhost/checkmates/success_handler.php?session_id={CHECKOUT_SESSION_ID}',
-                'cancel_url'  => 'http://localhost/checkmates/book.php'
+                'success_url' => 'http://localhost/agos/success_handler.php',
+                'cancel_url'  => 'http://localhost/agos/book.php'
             ]
         ]
     ];
@@ -60,8 +60,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $type,
             $amount / 100
         ]);
-        // Store reservation ID so success_handler.php can confirm it
+        // Store reservation ID and PayMongo session ID so success_handler.php can confirm it
         $_SESSION['pending_reservation_id'] = $pdo->lastInsertId();
+        $_SESSION['paymongo_session_id']    = $json['data']['id'];
 
         header("Location: " . $json['data']['attributes']['checkout_url']);
         exit();

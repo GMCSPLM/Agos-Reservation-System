@@ -1,7 +1,55 @@
 <?php 
 include 'header.php';
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_feedback'])) {
+// Show booking success toast if redirected from payment
+$showBookingSuccess = false;
+if (isset($_SESSION['booking_success']) && $_SESSION['booking_success']) {
+    $showBookingSuccess = true;
+    unset($_SESSION['booking_success']);
+}
+?>
+
+<?php if ($showBookingSuccess): ?>
+<style>
+#booking-toast {
+    position: fixed;
+    top: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: #2e7d32;
+    color: white;
+    padding: 18px 40px;
+    border-radius: 50px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    z-index: 99999;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    animation: toastIn 0.4s ease forwards, toastOut 0.4s ease 4s forwards;
+}
+@keyframes toastIn {
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes toastOut {
+    to { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+}
+</style>
+<div id="booking-toast">
+    <span style="font-size:1.4rem;">&#10003;</span>
+    Booking confirmed! Your reservation has been successfully placed.
+</div>
+<script>
+setTimeout(() => {
+    const t = document.getElementById('booking-toast');
+    if (t) t.remove();
+}, 4600);
+</script>
+<?php endif; ?>
+
+<?php if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_feedback'])) {
     if (!isset($_SESSION['customer_id'])) {
         echo "<script>alert('You must be logged in to submit feedback.'); window.location='login.php';</script>";
     } else {
@@ -871,7 +919,7 @@ function showLoginModal(date, branchId) {
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(0, 0, 0, 0.7);
+        background: rgba(0, 0, 0, 0.6);
         display: flex;
         justify-content: center;
         align-items: center;
@@ -882,82 +930,67 @@ function showLoginModal(date, branchId) {
     modal.innerHTML = `
         <div style="
             background: white;
-            padding: 40px;
-            border-radius: 20px;
-            max-width: 500px;
+            padding: 45px 40px 40px;
+            border-radius: 16px;
+            max-width: 420px;
             width: 90%;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             text-align: center;
             animation: slideUp 0.3s;
         ">
-            <div style="
-                width: 80px;
-                height: 80px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                border-radius: 50%;
-                margin: 0 auto 20px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 40px;
-            ">
-                🔒
-            </div>
-            <h2 style="color: #2c3e50; margin-bottom: 15px; font-size: 1.8rem;">Login Required</h2>
-            <p style="color: #666; margin-bottom: 10px; font-size: 1.1rem;">
-                You need to be logged in to book <strong>${branchText}</strong> for:
+            <h2 style="color: #1a1a2e; margin-bottom: 10px; font-size: 1.7rem; font-weight: 700;">Welcome Back</h2>
+            <p style="color: #888; margin-bottom: 8px; font-size: 1rem;">
+                You need to be logged in to book <strong style="color:#333">${branchText}</strong> for:
             </p>
-            <p style="color: var(--primary); font-weight: bold; font-size: 1.2rem; margin-bottom: 25px;">
-                📅 ${formattedDate}
+            <p style="color: var(--primary); font-weight: 600; font-size: 1.05rem; margin-bottom: 30px;">
+                ${formattedDate}
             </p>
-            <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+            <div style="display: flex; flex-direction: column; gap: 12px;">
                 <a href="login.php?redirect=book&date=${date}&branch=${branchId}" 
                    style="
-                       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                       background: linear-gradient(135deg, #1a3a6e 0%, #0077b6 100%);
                        color: white;
-                       padding: 15px 30px;
-                       border-radius: 10px;
+                       padding: 14px 30px;
+                       border-radius: 8px;
                        text-decoration: none;
                        font-weight: 600;
-                       font-size: 1.1rem;
-                       transition: 0.3s;
-                       display: inline-block;
+                       font-size: 1rem;
+                       transition: opacity 0.2s;
+                       display: block;
                    "
-                   onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 5px 20px rgba(102, 126, 234, 0.4)';"
-                   onmouseout="this.style.transform=''; this.style.boxShadow='';">
-                    🔑 Login
+                   onmouseover="this.style.opacity='0.9';"
+                   onmouseout="this.style.opacity='1';">
+                    LOG IN
                 </a>
                 <a href="signup.php" 
                    style="
                        background: white;
-                       color: var(--primary);
-                       border: 2px solid var(--primary);
-                       padding: 15px 30px;
-                       border-radius: 10px;
+                       color: #0077b6;
+                       border: 2px solid #0077b6;
+                       padding: 13px 30px;
+                       border-radius: 8px;
                        text-decoration: none;
                        font-weight: 600;
-                       font-size: 1.1rem;
-                       transition: 0.3s;
-                       display: inline-block;
+                       font-size: 1rem;
+                       transition: 0.2s;
+                       display: block;
                    "
-                   onmouseover="this.style.background='var(--primary)'; this.style.color='white';"
-                   onmouseout="this.style.background='white'; this.style.color='var(--primary)';">
-                    ✨ Sign Up
+                   onmouseover="this.style.background='#f0f7ff';"
+                   onmouseout="this.style.background='white';">
+                    Create Account
                 </a>
                 <button onclick="closeLoginModal()" 
                    style="
-                       background: #e0e0e0;
-                       color: #666;
+                       background: none;
+                       color: #aaa;
                        border: none;
-                       padding: 15px 30px;
-                       border-radius: 10px;
-                       font-weight: 600;
-                       font-size: 1.1rem;
+                       padding: 10px;
+                       font-size: 0.95rem;
                        cursor: pointer;
-                       transition: 0.3s;
+                       transition: color 0.2s;
                    "
-                   onmouseover="this.style.background='#d0d0d0';"
-                   onmouseout="this.style.background='#e0e0e0';">
+                   onmouseover="this.style.color='#0077b6';"
+                   onmouseout="this.style.color='#aaa';">
                     Cancel
                 </button>
             </div>
@@ -972,7 +1005,7 @@ function showLoginModal(date, branchId) {
             to { opacity: 1; }
         }
         @keyframes slideUp {
-            from { transform: translateY(50px); opacity: 0; }
+            from { transform: translateY(30px); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
         }
     `;
