@@ -140,7 +140,7 @@ if ($nextMonth > 12) {
 
 <style>
 .feedback-section-wrapper {
-    background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.3)), url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80');
+    background: linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.3)), url('Ripple-Effect.png');
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
@@ -692,29 +692,29 @@ if ($nextMonth > 12) {
 <section class="container" style="padding-top: 4rem; padding-bottom: 4rem;">
     <h2 class="section-title">Availability Calendar</h2>
     
-    <!-- Calendar Controls -->
-    <div class="calendar-controls">
-        <div class="calendar-nav">
-            <?php 
-            $prevDisabled = ($prevYear < date('Y') || ($prevYear == date('Y') && $prevMonth < date('m')));
-            if ($prevDisabled): ?>
-                <span class="nav-btn disabled">
-                    <i class="fas fa-chevron-left"></i> Previous
-                </span>
-            <?php else: ?>
-                <a href="?month=<?= $prevMonth ?>&year=<?= $prevYear ?>&branch=<?= $selectedBranch ?>#calendar" class="nav-btn">
-                    <i class="fas fa-chevron-left"></i> Previous
-                </a>
-            <?php endif; ?>
-            
-            <div class="current-month">
-                <i class="far fa-calendar-alt"></i> <?= $monthName ?>
-            </div>
-            
-            <a href="?month=<?= $nextMonth ?>&year=<?= $nextYear ?>&branch=<?= $selectedBranch ?>#calendar" class="nav-btn">
-                Next <i class="fas fa-chevron-right"></i>
+<!-- Calendar Controls -->
+<div class="calendar-controls">
+    <div class="calendar-nav">
+        <?php 
+        $prevDisabled = ($prevYear < date('Y') || ($prevYear == date('Y') && $prevMonth < date('m')));
+        if ($prevDisabled): ?>
+            <span class="nav-btn disabled">
+                <i class="fas fa-chevron-left"></i> Previous
+            </span>
+        <?php else: ?>
+            <a href="javascript:void(0)" class="nav-btn" onclick="navigateCalendar(<?= $prevMonth ?>, <?= $prevYear ?>, '<?= $selectedBranch ?>')">
+                <i class="fas fa-chevron-left"></i> Previous
             </a>
+        <?php endif; ?>
+        
+        <div class="current-month">
+            <i class="far fa-calendar-alt"></i> <?= $monthName ?>
         </div>
+        
+        <a href="javascript:void(0)" class="nav-btn" onclick="navigateCalendar(<?= $nextMonth ?>, <?= $nextYear ?>, '<?= $selectedBranch ?>')">
+            Next <i class="fas fa-chevron-right"></i>
+        </a>
+    </div>
         
         <div class="branch-selector">
             <label for="branchSelect">
@@ -1051,4 +1051,33 @@ document.addEventListener('keydown', function(e) {
 }
 </style>
 
+<script>
+function navigateCalendar(month, year, branch) {
+    fetch('?month=' + month + '&year=' + year + '&branch=' + branch)
+        .then(res => res.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // Update calendar grid
+            const newCalendar = doc.getElementById('calendar');
+            const oldCalendar = document.getElementById('calendar');
+            if (newCalendar && oldCalendar) {
+                oldCalendar.innerHTML = newCalendar.innerHTML;
+            }
+
+            // Update entire calendar-nav (prev/next buttons + month title)
+            const newNav = doc.querySelector('.calendar-nav');
+            const oldNav = document.querySelector('.calendar-nav');
+            if (newNav && oldNav) {
+                oldNav.innerHTML = newNav.innerHTML;
+            }
+
+            // Update URL without page reload
+            history.pushState(null, '', '?month=' + month + '&year=' + year + '&branch=' + branch + '#calendar');
+        });
+}
+</script>
+
 <?php include 'footer.php'; ?>
+
