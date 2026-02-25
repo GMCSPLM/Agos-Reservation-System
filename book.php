@@ -3,6 +3,13 @@ include 'header.php';
 if (!isset($_SESSION['user_id'])) echo "<script>window.location='login.php';</script>";
 
 $branches = $pdo->query("SELECT * FROM branches")->fetchAll();
+
+// Pre-fill from calendar click (branch & date passed via URL)
+$preselectedBranch = $_GET['branch'] ?? null;
+$preselectedDate   = $_GET['date']   ?? null;
+
+// Only use branch if it's a valid numeric ID (ignore 'all')
+$preselectedBranch = (is_numeric($preselectedBranch)) ? intval($preselectedBranch) : null;
 ?>
 
 <div class="container">
@@ -19,13 +26,18 @@ $branches = $pdo->query("SELECT * FROM branches")->fetchAll();
                     <label>Select Resort</label>
                     <select name="branch_id" required>
                         <?php foreach($branches as $b): ?>
-                            <option value="<?= $b['branch_id'] ?>"><?= $b['branch_name'] ?></option>
+                            <option value="<?= $b['branch_id'] ?>" 
+                                <?= ($preselectedBranch === intval($b['branch_id'])) ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($b['branch_name']) ?>
+                            </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Check-in Date</label>
-                    <input type="date" name="check_in" required min="<?= date('Y-m-d') ?>">
+                    <input type="date" name="check_in" required 
+                           min="<?= date('Y-m-d') ?>"
+                           value="<?= htmlspecialchars($preselectedDate ?? '') ?>">
                 </div>
                 <div class="form-group">
                     <label>Tour Type</label>
