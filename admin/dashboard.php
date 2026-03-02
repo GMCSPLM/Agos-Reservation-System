@@ -18,14 +18,20 @@ if (isset($_GET['reject'])) {
 }
 
 $view = $_GET['view'] ?? 'dashboard';
-
+// Auto-complete confirmed reservations whose date has passed
+$pdo->query("
+    UPDATE reservations 
+    SET status = 'Completed' 
+    WHERE status = 'Confirmed' 
+    AND reservation_date < CURDATE()
+");
 // Fetch analytics data
 $stats = [];
 
 // Overview stats
 $stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending'")->fetchColumn();
 $stats['todays_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
-$stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE())")->fetchColumn();
+$stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
 $stats['this_month_revenue'] = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
 $stats['total_customers'] = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
 $stats['avg_rating'] = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = MONTH(CURDATE())")->fetchColumn();
@@ -35,9 +41,10 @@ $monthly_query = "
     SELECT 
         DATE_FORMAT(reservation_date, '%Y-%m') as month,
         DATE_FORMAT(reservation_date, '%b %Y') as month_label,
-        COUNT(*) as total_bookings,
+        SUM(CASE WHEN status IN ('Pending', 'Confirmed', 'Completed') THEN 1 ELSE 0 END) as total_bookings,
         SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN 1 ELSE 0 END) as successful_bookings,
-        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN total_amount ELSE 0 END) as revenue
+        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN total_amount ELSE 0 END) as revenue,
+        SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_bookings
     FROM reservations
     WHERE reservation_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
     GROUP BY DATE_FORMAT(reservation_date, '%Y-%m'), DATE_FORMAT(reservation_date, '%b %Y')
@@ -50,15 +57,21 @@ $branch_query = "
     SELECT 
         b.branch_id,
         b.branch_name,
-        COUNT(r.reservation_id) as total_reservations,
+        SUM(CASE WHEN r.status IN ('Pending', 'Confirmed', 'Completed') THEN 1 ELSE 0 END) as total_reservations,
         SUM(CASE WHEN r.status = 'Confirmed' THEN 1 ELSE 0 END) as confirmed_count,
         SUM(CASE WHEN r.status = 'Completed' THEN 1 ELSE 0 END) as completed_count,
-        COALESCE(SUM(r.total_amount), 0) as total_revenue,
-        COALESCE(AVG(r.total_amount), 0) as avg_revenue_per_booking,
-        COALESCE(AVG(f.rating), 0) as avg_rating
+        COALESCE(SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN r.total_amount ELSE 0 END), 0) as total_revenue,
+        COALESCE(
+            SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN r.total_amount ELSE 0 END) /
+            NULLIF(SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN 1 ELSE 0 END), 0)
+        , 0) as avg_revenue_per_booking,
+        COALESCE((
+            SELECT AVG(f.rating)
+            FROM feedback f
+            WHERE f.branch_id = b.branch_id
+        ), 0) as avg_rating
     FROM branches b
     LEFT JOIN reservations r ON b.branch_id = r.branch_id
-    LEFT JOIN feedback f ON r.reservation_id = f.reservation_id
     GROUP BY b.branch_id, b.branch_name
     ORDER BY total_revenue DESC
 ";
@@ -83,11 +96,28 @@ if ($view === 'customers') {
 } elseif ($view === 'analytics') {
     $pageTitle = "Booking Analytics";
 } else {
+    // Filter
+    $allowed_statuses = ['All', 'Pending', 'Confirmed', 'Completed', 'Cancelled'];
+    $filter_status = isset($_GET['status']) && in_array($_GET['status'], $allowed_statuses)
+                     ? $_GET['status'] : 'All';
+
+    // Pagination
+    $per_page = 10;
+    $current_page = max(1, (int)($_GET['page'] ?? 1));
+    $where_clause = $filter_status !== 'All'
+                    ? "WHERE r.status = " . $pdo->quote($filter_status) : "";
+    $total_rows   = $pdo->query("SELECT COUNT(*) FROM reservations r $where_clause")->fetchColumn();
+    $total_pages  = max(1, ceil($total_rows / $per_page));
+    $current_page = min($current_page, $total_pages);
+    $offset       = ($current_page - 1) * $per_page;
+
     $data = $pdo->query("SELECT r.*, c.full_name, b.branch_name 
                          FROM reservations r 
                          JOIN customers c ON r.customer_id = c.customer_id 
                          JOIN branches b ON r.branch_id = b.branch_id 
-                         ORDER BY r.reservation_id DESC")->fetchAll();
+                         $where_clause
+                         ORDER BY r.reservation_id DESC
+                         LIMIT $per_page OFFSET $offset")->fetchAll();
     $pageTitle = "Reservation Overview";
 }
 ?>
@@ -112,33 +142,37 @@ if ($view === 'customers') {
         }
 
         .sidebar {
-            width: 280px;
+            width: 220px;
             background: rgba(255, 255, 255, 0.85);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            min-height: 100vh;
+            height: 100vh;
+            position: sticky;
+            top: 0;
             border-right: 1px solid rgba(255, 255, 255, 0.3);
             display: flex;
             flex-direction: column;
-            padding: 2rem;
+            padding: 1.5rem 1rem;
             box-shadow: 4px 0 15px rgba(0,0,0,0.05);
+            gap: 6px;
         }
 
         .brand {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 700;
             color: var(--primary-dark);
-            margin-bottom: 3rem;
+            margin-bottom: 1.5rem;
             display: flex;
             align-items: center;
             gap: 10px;
+            padding: 0 10px;
         }
 
         .nav-links {
             list-style: none;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 4px;
         }
 
         .nav-links a {
@@ -161,7 +195,7 @@ if ($view === 'customers') {
         }
 
         .logout-btn {
-            margin-top: auto;
+            margin-top: 8px;
             color: #ef476f !important;
             border: 1px solid #ef476f;
         }
@@ -369,6 +403,32 @@ if ($view === 'customers') {
                 grid-template-columns: 1fr;
             }
         }
+        /* Filter Bar */
+.filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.filter-bar > span { font-weight: 600; color: #555; font-size: 0.9rem; }
+.filter-btn {
+    text-decoration: none; padding: 7px 16px; border-radius: 50px;
+    font-size: 0.83rem; font-weight: 600; border: 2px solid #ddd;
+    color: #555; background: white; transition: 0.2s;
+}
+.filter-btn:hover { border-color: var(--primary); color: var(--primary); }
+.filter-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
+.filter-btn.f-pending.active   { background: #856404; border-color: #856404; }
+.filter-btn.f-confirmed.active { background: #155724; border-color: #155724; }
+.filter-btn.f-completed.active { background: #004085; border-color: #004085; }
+.filter-btn.f-cancelled.active { background: #721c24; border-color: #721c24; }
+
+/* Pagination */
+.pagination { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 1.5rem; flex-wrap: wrap; }
+.page-btn {
+    text-decoration: none; padding: 8px 13px; border-radius: 8px;
+    font-size: 0.875rem; font-weight: 600; border: 2px solid #ddd;
+    color: #555; background: white; transition: 0.2s; min-width: 38px; text-align: center;
+}
+.page-btn:hover { border-color: var(--primary); color: var(--primary); }
+.page-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
+.page-btn.disabled { opacity: 0.35; pointer-events: none; }
+.page-info { font-size: 0.82rem; color: #999; margin-left: 6px; }
     </style>
 </head>
 <body>
@@ -647,83 +707,105 @@ if ($view === 'customers') {
                 </div>
             </div>
 
-        <?php else: ?>
-            <!-- Reservations View (Default) -->
-            <div class="glass-panel">
-                <h1><?= $pageTitle ?></h1>
-                
-                <div style="overflow-x: auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Guest</th>
-                                <th>Branch</th>
-                                <th>Check-in</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach($data as $row): ?>
-                            <tr>
-                                <td><span style="font-weight:bold; color:var(--primary);">#<?= $row['reservation_id'] ?></span></td>
-                                <td><?= htmlspecialchars($row['full_name']) ?></td>
-                                <td><?= htmlspecialchars($row['branch_name']) ?></td>
-                                <td><?= date('M d, Y', strtotime($row['reservation_date'])) ?></td>
-                                <td>
-                                    <?php 
-                                        $statusClass = match($row['status']) {
-                                            'Confirmed'  => 'confirmed',
-                                            'Pending'    => 'pending',
-                                            'Completed'  => 'completed',
-                                            'Cancelled'  => 'cancelled',
-                                            default      => 'cancelled'
-                                        };
-                                    ?>
-                                    <span class="status <?= $statusClass ?>">
-                                        <?= $row['status'] ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <?php if($row['status'] === 'Pending'): ?>
-                                        <div class="action-buttons">
-                                            <a href="?approve=<?= $row['reservation_id'] ?>"
-                                               class="btn-action"
-                                               onclick="return confirm('Approve reservation #<?= $row['reservation_id'] ?>?')">
-                                                <i class="fas fa-check"></i> Approve
-                                            </a>
-                                            <a href="?reject=<?= $row['reservation_id'] ?>"
-                                               class="btn-action btn-reject"
-                                               onclick="return confirm('Reject reservation #<?= $row['reservation_id'] ?>? This cannot be undone.')">
-                                                <i class="fas fa-times"></i> Reject
-                                            </a>
-                                        </div>
-                                    <?php elseif($row['status'] === 'Confirmed'): ?>
-                                        <span style="color:#2ecc71; font-size:0.9rem;">
-                                            <i class="fas fa-check-circle"></i> Confirmed
-                                        </span>
-                                    <?php elseif($row['status'] === 'Completed'): ?>
-                                        <span style="color:#3498db; font-size:0.9rem;">
-                                            <i class="fas fa-flag-checkered"></i> Completed
-                                        </span>
-                                    <?php else: ?>
-                                        <span style="color:#e74c3c; font-size:0.9rem;">
-                                            <i class="fas fa-times-circle"></i> Cancelled
-                                        </span>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    
-                    <?php if(empty($data)): ?>
-                        <p style="text-align:center; padding: 2rem; color: #888;">No reservations found.</p>
-                    <?php endif; ?>
-                </div>
-            </div>
+<?php else: ?>
+<div class="glass-panel">
+    <h1><?= $pageTitle ?></h1>
+
+    <!-- Filter Buttons -->
+    <?php
+        $statuses = ['All','Pending','Confirmed','Completed','Cancelled'];
+        $filter_classes = ['All'=>'','Pending'=>'f-pending','Confirmed'=>'f-confirmed','Completed'=>'f-completed','Cancelled'=>'f-cancelled'];
+    ?>
+    <div class="filter-bar">
+        <span><i class="fas fa-filter"></i> Filter:</span>
+        <?php foreach ($statuses as $s):
+            $is_active = ($filter_status === $s);
+            $url = 'dashboard.php' . ($s !== 'All' ? '?status=' . urlencode($s) : '');
+            $cnt = ($s !== 'All') ? $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = " . $pdo->quote($s))->fetchColumn() : null;
+        ?>
+            <a href="<?= $url ?>" class="filter-btn <?= $filter_classes[$s] ?> <?= $is_active ? 'active' : '' ?>">
+                <?= $s ?><?php if($cnt !== null) echo " <span style='opacity:0.7;'>($cnt)</span>"; ?>
+            </a>
+        <?php endforeach; ?>
+        <span style="font-size:0.82rem;color:#999;margin-left:4px;"><?= $total_rows ?> record<?= $total_rows != 1 ? 's' : '' ?></span>
+    </div>
+
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Guest</th><th>Branch</th><th>Check-in</th><th>Status</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach($data as $row): ?>
+                <tr>
+                    <td><span style="font-weight:bold; color:var(--primary);">#<?= $row['reservation_id'] ?></span></td>
+                    <td><?= htmlspecialchars($row['full_name']) ?></td>
+                    <td><?= htmlspecialchars($row['branch_name']) ?></td>
+                    <td><?= date('M d, Y', strtotime($row['reservation_date'])) ?></td>
+                    <td>
+                        <?php $sc = match($row['status']) {
+                            'Confirmed'=>'confirmed','Pending'=>'pending',
+                            'Completed'=>'completed','Cancelled'=>'cancelled',default=>'cancelled'}; ?>
+                        <span class="status <?= $sc ?>"><?= $row['status'] ?></span>
+                    </td>
+                    <td>
+                        <?php if($row['status'] === 'Pending'): ?>
+                            <div class="action-buttons">
+                                <a href="?approve=<?= $row['reservation_id'] ?>" class="btn-action"
+                                   onclick="return confirm('Approve reservation #<?= $row['reservation_id'] ?>?')">
+                                    <i class="fas fa-check"></i> Approve
+                                </a>
+                                <a href="?reject=<?= $row['reservation_id'] ?>" class="btn-action btn-reject"
+                                   onclick="return confirm('Reject reservation #<?= $row['reservation_id'] ?>?')">
+                                    <i class="fas fa-times"></i> Reject
+                                </a>
+                            </div>
+                        <?php elseif($row['status'] === 'Confirmed'): ?>
+                            <span style="color:#2ecc71;font-size:0.9rem;"><i class="fas fa-check-circle"></i> Confirmed</span>
+                        <?php elseif($row['status'] === 'Completed'): ?>
+                            <span style="color:#3498db;font-size:0.9rem;"><i class="fas fa-flag-checkered"></i> Completed</span>
+                        <?php else: ?>
+                            <span style="color:#e74c3c;font-size:0.9rem;"><i class="fas fa-times-circle"></i> Cancelled</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php if(empty($data)): ?>
+            <p style="text-align:center; padding: 2rem; color: #888;">No reservations found.</p>
         <?php endif; ?>
+    </div>
+
+    <!-- Pagination -->
+    <?php if ($total_pages > 1):
+        $sp = ($filter_status !== 'All') ? '&status=' . urlencode($filter_status) : '';
+    ?>
+    <div class="pagination">
+        <a href="dashboard.php?page=<?= $current_page-1 . $sp ?>" class="page-btn <?= $current_page<=1?'disabled':'' ?>">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        <?php
+        $win=2; $s2=max(1,$current_page-$win); $e2=min($total_pages,$current_page+$win);
+        if($s2>1): ?><a href="dashboard.php?page=1<?= $sp ?>" class="page-btn">1</a><?php
+            if($s2>2): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif;
+        endif;
+        for($p=$s2;$p<=$e2;$p++): ?>
+            <a href="dashboard.php?page=<?= $p.$sp ?>" class="page-btn <?= $p===$current_page?'active':'' ?>"><?= $p ?></a>
+        <?php endfor;
+        if($e2<$total_pages):
+            if($e2<$total_pages-1): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif; ?>
+            <a href="dashboard.php?page=<?= $total_pages.$sp ?>" class="page-btn"><?= $total_pages ?></a>
+        <?php endif; ?>
+        <a href="dashboard.php?page=<?= $current_page+1 . $sp ?>" class="page-btn <?= $current_page>=$total_pages?'disabled':'' ?>">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        <span class="page-info">Page <?= $current_page ?> of <?= $total_pages ?></span>
+    </div>
+    <?php endif; ?>
+
+</div>
+<?php endif; ?>
     </div>
 
 </body>

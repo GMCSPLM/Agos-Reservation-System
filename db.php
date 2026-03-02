@@ -13,4 +13,12 @@ try {
 }
 
 session_start();
+
+// Auto-complete confirmed reservations whose date has passed
+$pdo->query("
+    UPDATE reservations 
+    SET status = 'Completed' 
+    WHERE status = 'Confirmed' 
+    AND reservation_date < CURDATE()
+");
 ?>

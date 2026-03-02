@@ -60,8 +60,9 @@ setTimeout(() => {
         $final_comment = $occupation ? "$raw_comment (Occupation: $occupation)" : $raw_comment;
         
         try {
-            $stmt = $pdo->prepare("INSERT INTO feedback (customer_id, rating, comments, feedback_date) VALUES (?, ?, ?, NOW())");
-            $stmt->execute([$_SESSION['customer_id'], $rating, $final_comment]);
+            $branch_id = isset($_POST['branch_id']) && is_numeric($_POST['branch_id']) ? (int)$_POST['branch_id'] : null;
+            $stmt = $pdo->prepare("INSERT INTO feedback (customer_id, branch_id, rating, comments, feedback_date) VALUES (?, ?, ?, ?, NOW())");
+            $stmt->execute([$_SESSION['customer_id'], $branch_id, $rating, $final_comment]);
             echo "<script>alert('Thank you for your feedback!'); window.location='index.php';</script>";
         } catch (Exception $e) {
             echo "<script>alert('Error submitting feedback.');</script>";
@@ -645,6 +646,17 @@ if ($nextMonth > 12) {
                         <input type="text" name="occupation" class="custom-input" placeholder="Occupation">
                         <span class="helper-text">Enter your job</span>
                     </div>
+                    <div class="custom-input-group">
+                        <select name="branch_id" class="custom-input" required>
+                            <option value="" disabled selected>Select a branch</option>
+                            <?php foreach($branches as $b): ?>
+                                <option value="<?= $b['branch_id'] ?>">
+                                    <?= htmlspecialchars($b['branch_name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <span class="helper-text">Which branch did you visit?</span>
+                </div>
                 </div>
 
                 <div>
