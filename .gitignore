@@ -1,0 +1,9 @@
+# Credentials
+config.php
+
+# Database exports
+checkmates_db.sql
+
+# OS generated files
+.DS_Store
+Thumbs.db

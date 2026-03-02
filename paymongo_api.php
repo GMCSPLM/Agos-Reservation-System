@@ -1,5 +1,6 @@
 <?php
 require_once 'db.php';
+require_once 'config.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $branch_id = $_POST['branch_id'];
@@ -37,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'Content-Type: application/json',
-        'Authorization: Basic ' . base64_encode('sk_test_gmW1yUU2gXPpHL6X1BqHdXU5:')
+        'Authorization: Basic ' . base64_encode(PAYMONGO_SECRET_KEY . ':')
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
