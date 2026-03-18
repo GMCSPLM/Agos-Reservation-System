@@ -271,6 +271,42 @@ if ($nextMonth > 12) {
     color: white;
 }
 
+/* Character Count Bar */
+.word-count-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+    padding: 4px 10px;
+    background: rgba(255,255,255,0.85);
+    border-radius: 20px;
+    font-family: 'Poppins', sans-serif;
+}
+.word-count-label { font-size: 0.75rem; color: #555; }
+.word-count-progress {
+    flex: 1;
+    height: 5px;
+    background: #e0e0e0;
+    border-radius: 10px;
+    margin: 0 10px;
+    overflow: hidden;
+}
+.word-count-progress-fill {
+    height: 100%;
+    border-radius: 10px;
+    background: #2a9d8f;
+    transition: width 0.2s, background 0.2s;
+}
+.word-count-num {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #023e8a;
+    transition: color 0.2s;
+}
+.word-count-num.warn { color: #e07b00; }
+.word-count-num.over { color: #d62828; }
+.word-count-num.ok   { color: #2a9d8f; }
+
 /* Calendar Styles */
 .calendar-controls {
     background: white;
@@ -609,9 +645,6 @@ if ($nextMonth > 12) {
                     <h3><?= htmlspecialchars($a['amenity_name']) ?></h3>
                     <small style="color: #888; text-transform: uppercase;"><?= htmlspecialchars($a['branch_name']) ?></small>
                     <p style="margin-top: 10px;"><?= htmlspecialchars($a['description']) ?></p>
-                    <?php if($a['deposit_amount'] > 0): ?>
-                        <span class="price" style="font-size: 0.9rem;">Deposit: ₱<?= number_format($a['deposit_amount'], 2) ?></span>
-                    <?php endif; ?>
                     <span style="background: #e0f7fa; color: #006064; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;"><?= $a['availability'] ?></span>
                 </div>
             </div>
@@ -638,9 +671,9 @@ if ($nextMonth > 12) {
             <div class="custom-form-grid">
                 <div>
                     <div class="custom-input-group">
-                        <input type="text" name="name" class="custom-input" placeholder="Name" 
+                        <input type="text" name="name" class="custom-input" placeholder="Email Address" 
                                value="<?= isset($_SESSION['username']) ? $_SESSION['username'] : '' ?>" required>
-                        <span class="helper-text">Enter your name</span>
+                        <span class="helper-text">Enter your email</span>
                     </div>
                     <div class="custom-input-group">
                         <input type="text" name="occupation" class="custom-input" placeholder="Occupation">
@@ -660,7 +693,14 @@ if ($nextMonth > 12) {
                 </div>
 
                 <div>
-                    <textarea name="comments" class="custom-textarea" placeholder="Tell us your opinion!" required></textarea>
+                    <textarea name="comments" id="feedbackComments" class="custom-textarea" placeholder="Tell us your opinion" maxlength="500" required></textarea>
+                    <div class="word-count-bar">
+                        <span class="word-count-label">Chars:</span>
+                        <div class="word-count-progress">
+                            <div class="word-count-progress-fill" id="wcFill" style="width:0%"></div>
+                        </div>
+                        <span class="word-count-num" id="wcNum">0 / 500</span>
+                    </div>
                     <span class="helper-text">How would you describe your stay with us?</span>
                 </div>
 
@@ -871,13 +911,38 @@ if ($nextMonth > 12) {
 </section>
 
 <script>
+const wcTextarea = document.getElementById('feedbackComments');
+const wcNum      = document.getElementById('wcNum');
+const wcFill     = document.getElementById('wcFill');
+const WC_MAX     = 500;
+const WC_MIN     = 20;
+
+function updateCharCount() {
+    const cc = wcTextarea.value.length;
+    wcNum.textContent = `${cc} / ${WC_MAX}`;
+    wcFill.style.width = Math.min(cc / WC_MAX * 100, 100) + '%';
+    wcNum.className = 'word-count-num';
+    if (cc >= WC_MAX)           { wcNum.classList.add('over'); wcFill.style.background = '#d62828'; }
+    else if (cc >= WC_MAX * 0.85) { wcNum.classList.add('warn'); wcFill.style.background = '#e07b00'; }
+    else if (cc >= WC_MIN)      { wcNum.classList.add('ok');   wcFill.style.background = '#2a9d8f'; }
+    else                        {                               wcFill.style.background = '#aaa'; }
+}
+
+if (wcTextarea) {
+    wcTextarea.addEventListener('input', updateCharCount);
+    updateCharCount();
+}
+</script>
+
+<script>
 // Check if user is logged in (passed from PHP)
 const isLoggedIn = <?php echo isset($_SESSION['customer_id']) ? 'true' : 'false'; ?>;
 
 function changeBranch(branchId) {
     const urlParams = new URLSearchParams(window.location.search);
-    urlParams.set('branch', branchId);
-    window.location.href = '?' + urlParams.toString() + '#calendar';
+    const month = urlParams.get('month') || '<?= $selectedMonth ?>';
+    const year = urlParams.get('year') || '<?= $selectedYear ?>';
+    navigateCalendar(month, year, branchId);
 }
 
 // Smooth scroll to calendar when navigating

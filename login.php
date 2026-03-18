@@ -1,6 +1,19 @@
 <?php 
 include 'header.php'; 
 
+// Capture pending booking intent from URL parameters (set when guest clicks a date)
+// Store in session so it survives the POST redirect
+if ($_SERVER["REQUEST_METHOD"] == "GET") {
+    if (isset($_GET['redirect']) && $_GET['redirect'] === 'book' 
+        && !empty($_GET['date']) && !empty($_GET['branch'])) {
+        $_SESSION['pending_booking_date']   = $_GET['date'];
+        $_SESSION['pending_booking_branch'] = $_GET['branch'];
+    } else {
+        // Clear any stale pending booking if the user navigates to login normally
+        unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
+    }
+}
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = $_POST['email'];
     $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ?");
@@ -8,12 +21,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $user = $stmt->fetch();
 
     if ($user && password_verify($_POST['password'], $user['password_hash'])) {
-        $_SESSION['user_id'] = $user['user_id'];
-        $_SESSION['username'] = $user['username'];
-        $_SESSION['role'] = $user['role'];
+        $_SESSION['user_id']     = $user['user_id'];
+        $_SESSION['username']    = $user['username'];
+        $_SESSION['role']        = $user['role'];
         $_SESSION['customer_id'] = $user['customer_id'];
-        
-        $redirect = ($user['role'] == 'Admin') ? "admin/dashboard.php" : "book.php";
+
+        if ($user['role'] == 'Admin') {
+            // Admins always go to their dashboard
+            $redirect = "admin/dashboard.php";
+        } elseif (!empty($_SESSION['pending_booking_date']) && !empty($_SESSION['pending_booking_branch'])) {
+            // User came from the calendar — resume the booking they started
+            $date   = urlencode($_SESSION['pending_booking_date']);
+            $branch = urlencode($_SESSION['pending_booking_branch']);
+            unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
+            $redirect = "book.php?date=$date&branch=$branch";
+        } else {
+            // Normal login with no booking intent — go to home page
+            $redirect = "index.php";
+        }
+
         echo "<script>window.location.href='$redirect';</script>";
         exit;
     } else {
@@ -116,25 +142,41 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         clearInterval(timerInterval);
     }
 
-    function sendOTP() {
-        const email = document.getElementById('forgotEmail').value.trim();
-        const btn = document.getElementById('sendOtpBtn');
-        const msg = document.getElementById('forgotMsg');
+function sendOTP() {
+    const email = document.getElementById('forgotEmail').value.trim();
+    const btn = document.getElementById('sendOtpBtn');
+    const msg = document.getElementById('forgotMsg');
 
-        if (!email) {
-            msg.innerHTML = "<p style='color:red; text-align:center;'>Please enter your email.</p>";
+    if (!email) {
+        msg.innerHTML = "<p style='color:red; text-align:center;'>Please enter your email.</p>";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Checking...";
+
+    // ✅ Step 1: Validate email against the database first
+    fetch('check_email.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (!data.exists) {
+            btn.disabled = false;
+            btn.textContent = "SEND OTP";
+            msg.innerHTML = `<p style='color:red; text-align:center;'>${data.message}</p>`;
             return;
         }
 
-        // Generate 6-digit OTP
+        // ✅ Step 2: Email exists — generate and send OTP
         generatedOTP = Math.floor(100000 + Math.random() * 900000).toString();
-        otpExpiry = Date.now() + (5 * 60 * 1000); // 5 minutes
+        otpExpiry = Date.now() + (5 * 60 * 1000);
         verifiedEmail = email;
 
-        btn.disabled = true;
         btn.textContent = "Sending...";
 
-        // TODO: Replace with your EmailJS Service ID and Template ID
         emailjs.send("se_project", "template_5revkij", {
             to_email: email,
             otp_code: generatedOTP,
@@ -143,21 +185,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             btn.disabled = false;
             btn.textContent = "SEND OTP";
 
-            // Show OTP box
             document.getElementById('forgotBox').style.display = 'none';
             document.getElementById('otpBox').style.display = 'block';
             document.getElementById('otpMsg').innerHTML = '';
 
-            // Start countdown timer
             startTimer();
-
         }).catch(function(error) {
             btn.disabled = false;
             btn.textContent = "SEND OTP";
             msg.innerHTML = "<p style='color:red; text-align:center;'>Failed to send OTP. Please try again.</p>";
             console.error("EmailJS error:", error);
         });
-    }
+    })
+    .catch(() => {
+        btn.disabled = false;
+        btn.textContent = "SEND OTP";
+        msg.innerHTML = "<p style='color:red; text-align:center;'>Something went wrong. Please try again.</p>";
+    });
+}
 
     function startTimer() {
         clearInterval(timerInterval);

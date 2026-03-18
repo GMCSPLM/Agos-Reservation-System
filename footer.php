@@ -1,20 +1,21 @@
 <style>
     footer {
-        background-color: #5e97a3 !important;
-        color: #ffffff !important;
-        padding: 60px 0 50px 0;
+        background-color: #3d7f8c;
+        background-image: linear-gradient(135deg, #3d7f8c 0%, #2e6875 60%, #265a65 100%);
+        color: #ffffff;
+        padding: 60px 0 0 0;
         margin-top: auto;
-        backdrop-filter: none !important;
+        font-family: 'Poppins', sans-serif;
     }
 
     .footer-content-wrapper {
-        max-width: 1200px;
+        max-width: 1100px;
         margin: 0 auto;
         padding: 0 40px;
         display: grid;
-        grid-template-columns: 1.2fr 1.5fr 0.8fr 1.2fr;
-        gap: 40px;
-        text-align: left;
+        grid-template-columns: 1.1fr 1.6fr 1.2fr;
+        gap: 50px;
+        align-items: start;
     }
 
     .footer-col {
@@ -25,172 +26,231 @@
     .brand-col {
         align-items: flex-start;
     }
-    
+
     .footer-logo-icon {
-        font-size: 3.5rem;
-        margin-bottom: 5px;
-        color: white;
+        font-size: 3rem;
+        margin-bottom: 8px;
+        color: rgba(255,255,255,0.9);
     }
-    
+
     .footer-brand-name {
         font-size: 2rem;
-        font-weight: 400;
+        font-weight: 600;
         line-height: 1;
-        margin-bottom: 5px;
+        margin-bottom: 8px;
         color: white;
+        letter-spacing: -0.5px;
     }
-    
+
     .footer-brand-sub {
-        font-size: 0.9rem;
-        letter-spacing: 3px;
+        font-size: 0.75rem;
+        letter-spacing: 4px;
         text-transform: uppercase;
-        position: relative;
-        width: 100%;
-        text-align: center;
-        color: white;
+        color: rgba(255,255,255,0.65);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 400;
     }
-    
-    .footer-brand-sub::before, .footer-brand-sub::after {
+
+    .footer-brand-sub::before,
+    .footer-brand-sub::after {
         content: "";
-        position: absolute;
-        top: 50%;
-        width: 30px;
+        display: block;
+        width: 28px;
         height: 1px;
-        background: rgba(255,255,255,0.5);
+        background: rgba(255,255,255,0.4);
     }
-    .footer-brand-sub::before { left: 10px; }
-    .footer-brand-sub::after { right: 10px; }
+
+    .footer-tagline {
+        margin-top: 18px;
+        font-size: 0.85rem;
+        color: rgba(255,255,255,0.6);
+        line-height: 1.6;
+        font-weight: 300;
+        max-width: 200px;
+    }
 
     .footer-heading {
-        font-size: 1.4rem;
+        font-size: 0.7rem;
         font-weight: 700;
         text-transform: uppercase;
-        margin-bottom: 25px;
-        letter-spacing: 0.5px;
-        color: white;
+        letter-spacing: 3px;
+        color: rgba(255,255,255,0.55);
+        margin-bottom: 20px;
+        margin-top: 0;
+    }
+
+    .location-block {
+        margin-bottom: 20px;
     }
 
     .location-title {
-        font-size: 1.1rem;
+        font-size: 0.95rem;
         font-weight: 700;
-        margin-bottom: 5px;
+        margin-bottom: 4px;
         color: white;
     }
 
     .footer-text {
-        font-size: 0.95rem;
-        margin-bottom: 25px;
-        line-height: 1.5;
+        font-size: 0.875rem;
+        line-height: 1.6;
         font-weight: 300;
-        color: white;
+        color: rgba(255,255,255,0.7);
+        margin: 0;
     }
 
-    .footer-links a {
-        color: white;
-        text-decoration: underline;
-        margin-bottom: 12px;
-        display: block;
-        font-size: 0.95rem;
-        font-weight: 400;
-        transition: 0.3s;
-    }
-    .footer-links a:hover {
-        opacity: 0.8;
-        color: white;
+    .footer-divider {
+        width: 32px;
+        height: 1px;
+        background: rgba(255,255,255,0.25);
+        margin: 18px 0;
     }
 
     .contact-list {
         list-style: none;
         padding: 0;
         margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
     }
-    
+
     .contact-list li {
         display: flex;
         align-items: center;
         gap: 12px;
-        margin-bottom: 12px;
-        font-size: 0.95rem;
-        color: white;
+        font-size: 0.9rem;
+        color: rgba(255,255,255,0.8);
     }
-    
-    .contact-list i {
-        font-size: 1.1rem;
+
+    .contact-icon {
+        width: 32px;
+        height: 32px;
+        background: rgba(255,255,255,0.12);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 0.85rem;
+        transition: background 0.2s;
     }
-    
+
+    .contact-list li:hover .contact-icon {
+        background: rgba(255,255,255,0.22);
+    }
+
     .contact-list a {
+        color: rgba(255,255,255,0.85);
+        text-decoration: none;
+        transition: color 0.2s;
+    }
+
+    .contact-list a:hover {
         color: white;
         text-decoration: underline;
+    }
+
+    /* Bottom bar */
+    .footer-bottom {
+        margin-top: 48px;
+        border-top: 1px solid rgba(255,255,255,0.12);
+        padding: 18px 40px;
+        max-width: 1100px;
+        margin-left: auto;
+        margin-right: auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.8rem;
+        color: rgba(255,255,255,0.4);
+    }
+
+    .footer-bottom-bar {
+        background: rgba(0,0,0,0.1);
+        padding: 0;
     }
 
     @media (max-width: 900px) {
         .footer-content-wrapper {
             grid-template-columns: 1fr 1fr;
+            gap: 36px;
+        }
+        .brand-col {
+            grid-column: 1 / -1;
         }
     }
-    
+
     @media (max-width: 600px) {
         .footer-content-wrapper {
             grid-template-columns: 1fr;
+            padding: 0 24px;
             text-align: center;
         }
-        .brand-col, .footer-col {
+        .brand-col {
             align-items: center;
+            grid-column: auto;
         }
-        .footer-brand-sub::before, .footer-brand-sub::after { display: none; }
+        .footer-tagline { max-width: 100%; }
+        .footer-bottom {
+            flex-direction: column;
+            gap: 6px;
+            text-align: center;
+            padding: 18px 24px;
+        }
     }
 </style>
 
 <footer>
     <div class="footer-content-wrapper">
-        
+
+        <!-- Brand -->
         <div class="footer-col brand-col">
             <i class="fas fa-water footer-logo-icon"></i>
             <div class="footer-brand-name">CheckMates</div>
             <div class="footer-brand-sub">AGOS</div>
+            <p class="footer-tagline">We create unforgettable experiences for our guests.</p>
         </div>
 
+        <!-- Locations -->
         <div class="footer-col">
-            <div class="location-title">Hacienda Emiart</div>
-            <p class="footer-text">Purok 7, Barangay Tibangan, Bustos Bulacan</p>
-
-            <div class="location-title">Emiart Resorts I, II, III</div>
-            <p class="footer-text">106-114 Pasig St, Maypajo, Caloocan, Metro Manila</p>
-        </div>
-
-        <div class="footer-col">
-            <h3 class="footer-heading">PRIVACY</h3>
-            <div class="footer-links">
-                <a href="#">Terms of use</a>
-                <a href="#">Privacy Policy</a>
-                <a href="#">Cookies</a>
+            <h4 class="footer-heading">Our Locations</h4>
+            <div class="location-block">
+                <div class="location-title">Hacienda Emiart</div>
+                <p class="footer-text">Purok 7, Barangay Tibangan,<br>Bustos, Bulacan</p>
+            </div>
+            <div class="footer-divider"></div>
+            <div class="location-block">
+                <div class="location-title">Emiart Resorts I, II &amp; III</div>
+                <p class="footer-text">106–114 Pasig St, Maypajo,<br>Caloocan, Metro Manila</p>
             </div>
         </div>
 
+        <!-- Contact -->
         <div class="footer-col">
-            <h3 class="footer-heading">RESERVATIONS</h3>
+            <h4 class="footer-heading">Reservations</h4>
             <ul class="contact-list">
                 <li>
-                    <i class="fas fa-phone-alt"></i> 
+                    <span class="contact-icon"><i class="fas fa-phone-alt"></i></span>
                     <span>09331766862</span>
                 </li>
                 <li>
-                    <i class="fas fa-phone-alt"></i> 
+                    <span class="contact-icon"><i class="fas fa-phone-alt"></i></span>
                     <span>09327815012</span>
                 </li>
                 <li>
-                    <i class="fas fa-envelope"></i> 
+                    <span class="contact-icon"><i class="fas fa-envelope"></i></span>
                     <span>emiartresort@yahoo.com</span>
                 </li>
                 <li>
-                    <i class="fab fa-facebook-square"></i> 
-                    <a href="#">Emiart Private Resorts</a>
+                    <span class="contact-icon"><i class="fab fa-facebook-square"></i></span>
+                    <a href="https://www.facebook.com/emiartprivateresort" target="_blank" rel="noopener noreferrer">Emiart Private Resorts</a>
                 </li>
             </ul>
         </div>
 
     </div>
 </footer>
-
 </body>
 </html>

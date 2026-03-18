@@ -465,8 +465,8 @@ if ($view === 'customers') {
         <?php if ($view === 'analytics'): ?>
             <!-- Analytics View -->
             <div class="glass-panel">
-                <h1>📊 <?= $pageTitle ?></h1>
-                <p style="color: #7f8c8d; margin-bottom: 2rem;">Comprehensive booking insights and performance metrics</p>
+                <h1><?= $pageTitle ?></h1>
+                <p style="color: #7f8c8d; margin-bottom: 2rem;">Booking and Performance Insights</p>
                 
                 <!-- Statistics Cards -->
                 <div class="stats-grid">
@@ -512,7 +512,7 @@ if ($view === 'customers') {
             <div class="charts-grid">
                 <!-- Monthly Bookings Trend -->
                 <div class="chart-card">
-                    <h2>📈 Monthly Booking Trends (Last 12 Months)</h2>
+                    <h2>Monthly Booking Trends (Last 12 Months)</h2>
                     <div class="chart-container">
                         <canvas id="monthlyBookingsChart"></canvas>
                     </div>
@@ -520,7 +520,7 @@ if ($view === 'customers') {
 
                 <!-- Reservation Type Distribution -->
                 <div class="chart-card">
-                    <h2>📊 Reservation Type Distribution</h2>
+                    <h2>Reservation Type Distribution</h2>
                     <div class="chart-container">
                         <canvas id="reservationTypeChart"></canvas>
                     </div>
@@ -530,7 +530,7 @@ if ($view === 'customers') {
             <!-- Revenue Chart -->
             <div class="glass-panel">
                 <div class="chart-card" style="box-shadow: none; padding: 0;">
-                    <h2>💰 Monthly Revenue Trend</h2>
+                    <h2>Monthly Revenue Trend</h2>
                     <div class="chart-container" style="height: 350px;">
                         <canvas id="revenueChart"></canvas>
                     </div>
@@ -539,7 +539,7 @@ if ($view === 'customers') {
 
             <!-- Branch Performance -->
             <div class="glass-panel">
-                <h2 style="margin-bottom: 1rem;">🏢 Branch Performance</h2>
+                <h2 style="margin-bottom: 1rem;">Branch Performance</h2>
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
