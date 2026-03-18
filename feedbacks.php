@@ -8,12 +8,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_feedback'])) {
         $rating = $_POST['rating'] ?? 5;
         $occupation = htmlspecialchars($_POST['occupation']);
         $raw_comment = htmlspecialchars($_POST['comments']);
+        $branch_id = isset($_POST['branch_id']) && is_numeric($_POST['branch_id']) ? (int)$_POST['branch_id'] : null;
         
         $final_comment = $occupation ? "$raw_comment (Occupation: $occupation)" : $raw_comment;
         
         try {
-            $stmt = $pdo->prepare("INSERT INTO feedback (customer_id, rating, comments, feedback_date) VALUES (?, ?, ?, NOW())");
-            $stmt->execute([$_SESSION['customer_id'], $rating, $final_comment]);
+            $stmt = $pdo->prepare("INSERT INTO feedback (customer_id, branch_id, rating, comments, feedback_date) VALUES (?, ?, ?, ?, NOW())");
+            $stmt->execute([$_SESSION['customer_id'], $branch_id, $rating, $final_comment]);
             echo "<script>alert('Thank you for your feedback!'); window.location='feedbacks.php';</script>";
         } catch (Exception $e) {
             echo "<script>alert('Error submitting feedback.');</script>";
@@ -21,7 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_feedback'])) {
     }
 }
 
-$feedbacks = $pdo->query("SELECT f.*, c.full_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id ORDER BY feedback_date DESC")->fetchAll();
+$branches = $pdo->query("SELECT * FROM branches")->fetchAll();
+$feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC")->fetchAll();
 ?>
 
 <style>
@@ -184,6 +186,17 @@ $feedbacks = $pdo->query("SELECT f.*, c.full_name FROM feedback f JOIN customers
                         <input type="text" name="occupation" class="custom-input" placeholder="Occupation">
                         <span class="helper-text">Enter your job</span>
                     </div>
+                    <div class="custom-input-group">
+                        <select name="branch_id" class="custom-input" required>
+                            <option value="" disabled selected>Select a branch</option>
+                            <?php foreach($branches as $b): ?>
+                                <option value="<?= $b['branch_id'] ?>">
+                                    <?= htmlspecialchars($b['branch_name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <span class="helper-text">Which branch did you visit?</span>
+                    </div>
                 </div>
 
                 <div>
@@ -220,6 +233,9 @@ $feedbacks = $pdo->query("SELECT f.*, c.full_name FROM feedback f JOIN customers
                     <div style="width: 40px; height: 40px; background: #ddd; border-radius: 50%;"></div>
                     <div>
                         <strong style="display: block;"><?= htmlspecialchars($f['full_name']) ?></strong>
+                        <?php if (!empty($f['branch_name'])): ?>
+                            <small style="color: #023e8a; font-weight: 600;"><?= htmlspecialchars($f['branch_name']) ?></small><br>
+                        <?php endif; ?>
                         <small style="color: #888;"><?= date('M d, Y', strtotime($f['feedback_date'])) ?></small>
                     </div>
                 </div>

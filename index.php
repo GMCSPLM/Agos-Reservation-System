@@ -72,7 +72,7 @@ setTimeout(() => {
 
 $branches = $pdo->query("SELECT * FROM branches")->fetchAll();
 $amenities = $pdo->query("SELECT a.*, b.branch_name FROM amenities a JOIN branches b ON a.branch_id = b.branch_id")->fetchAll();
-$feedbacks = $pdo->query("SELECT f.*, c.full_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id ORDER BY feedback_date DESC LIMIT 6")->fetchAll();
+$feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 6")->fetchAll();
 
 // Calendar Variables
 $selectedMonth = $_GET['month'] ?? date('m');
@@ -692,6 +692,9 @@ if ($nextMonth > 12) {
                     <div style="width: 40px; height: 40px; background: #ddd; border-radius: 50%;"></div>
                     <div>
                         <strong style="display: block;"><?= htmlspecialchars($f['full_name']) ?></strong>
+                        <?php if (!empty($f['branch_name'])): ?>
+                            <small style="color: #023e8a; font-weight: 600;"><?= htmlspecialchars($f['branch_name']) ?></small><br>
+                        <?php endif; ?>
                         <small style="color: #888;"><?= date('M d, Y', strtotime($f['feedback_date'])) ?></small>
                     </div>
                 </div>
@@ -1092,4 +1095,3 @@ function navigateCalendar(month, year, branch) {
 </script>
 
 <?php include 'footer.php'; ?>
-
