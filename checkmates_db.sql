@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Mar 02, 2026 at 04:39 PM
+-- Generation Time: Mar 18, 2026 at 02:35 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -172,7 +172,9 @@ INSERT INTO `feedback` (`feedback_id`, `customer_id`, `reservation_id`, `rating`
 (7, 7, NULL, 1, 'dnjs nkjflf (Occupation: doctor)', '2026-01-31 09:39:24', NULL),
 (8, 7, NULL, 3, 'sddbinsjcnsckjn (Occupation: Tambay)', '2026-02-06 14:37:18', NULL),
 (9, 7, NULL, 5, 'MAJNDIJANDIUSDBAIUUA (Occupation: TEST)', '2026-02-11 16:00:28', NULL),
-(10, 7, NULL, 5, 'dsadadadaddd (Occupation: Test)', '2026-03-02 16:51:01', 4);
+(10, 7, NULL, 5, 'dsadadadaddd (Occupation: Test)', '2026-03-02 16:51:01', 4),
+(11, 7, NULL, 5, 'dsa', '2026-03-04 21:30:12', 4),
+(12, 7, NULL, 5, '1', '2026-03-04 21:30:27', 2);
 
 -- --------------------------------------------------------
 
@@ -401,7 +403,7 @@ ALTER TABLE `customers`
 -- AUTO_INCREMENT for table `feedback`
 --
 ALTER TABLE `feedback`
-  MODIFY `feedback_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `feedback_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
 --
 -- AUTO_INCREMENT for table `reservations`
