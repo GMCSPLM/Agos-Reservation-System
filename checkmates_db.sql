@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Mar 18, 2026 at 02:35 PM
+-- Generation Time: Mar 18, 2026 at 10:28 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -32,7 +32,6 @@ CREATE TABLE `amenities` (
   `branch_id` int(11) NOT NULL,
   `amenity_name` varchar(100) NOT NULL,
   `description` text DEFAULT NULL,
-  `deposit_amount` decimal(10,2) DEFAULT 0.00,
   `availability` enum('Available','Unavailable') DEFAULT 'Available'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -40,11 +39,11 @@ CREATE TABLE `amenities` (
 -- Dumping data for table `amenities`
 --
 
-INSERT INTO `amenities` (`amenity_id`, `branch_id`, `amenity_name`, `description`, `deposit_amount`, `availability`) VALUES
-(1, 4, 'Swimming Pool', 'Pool with slide and waterfalls', 0.00, 'Available'),
-(2, 4, 'Half Basketball Court', 'Standard half court size', 0.00, 'Available'),
-(3, 4, 'Videoke', 'Unlimited songs until 10PM', 0.00, 'Available'),
-(4, 4, 'Billiards', 'Pool table available', 0.00, 'Available');
+INSERT INTO `amenities` (`amenity_id`, `branch_id`, `amenity_name`, `description`, `availability`) VALUES
+(1, 4, 'Swimming Pool', 'Pool with slide and waterfalls', 'Available'),
+(2, 4, 'Half Basketball Court', 'Standard half court size', 'Available'),
+(3, 4, 'Videoke', 'Unlimited songs until 10PM', 'Available'),
+(4, 4, 'Billiards', 'Pool table available', 'Available');
 
 -- --------------------------------------------------------
 
@@ -70,20 +69,6 @@ INSERT INTO `branches` (`branch_id`, `branch_name`, `location`, `contact_number`
 (2, 'Emiart Resort 2', '31 Laon Laan St, Maypajo, Caloocan', '09327815012', NULL, 'Emiart-Two.png'),
 (3, 'Emiart Resort 3', '94 Pasig St, 35 Zone 3, Caloocan', '09327815012', NULL, 'Emiart-Three.png'),
 (4, 'Hacienda Emiart', 'Purok 7, Barangay Tibangan, Bustos Bulacan', '09337766862', NULL, 'Hacienda-One.jpg');
-
--- --------------------------------------------------------
-
---
--- Table structure for table `branch_capacity`
---
-
-CREATE TABLE `branch_capacity` (
-  `capacity_id` int(11) NOT NULL,
-  `branch_id` int(11) NOT NULL,
-  `max_capacity` int(11) NOT NULL,
-  `current_capacity` int(11) DEFAULT 0,
-  `date_updated` date DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -127,7 +112,9 @@ INSERT INTO `customers` (`customer_id`, `full_name`, `email`, `contact_number`, 
 (4, 'test', 'test@gmail.com', '091234', NULL),
 (7, 'Test', 'test12@gmail.com', '1234', NULL),
 (9, 'TEST', 'test1234@gmail.com', '09123458732', NULL),
-(10, 'test', 'test12345@gmail.com', 'a09302922332323', NULL);
+(10, 'test', 'test12345@gmail.com', 'a09302922332323', NULL),
+(11, 'Mark ', 'mjpgeronimo2023@plm.edu.ph', '09173839292', NULL),
+(12, 'New', 'newaccount@gmail.com', '02899393292', NULL);
 
 -- --------------------------------------------------------
 
@@ -174,7 +161,9 @@ INSERT INTO `feedback` (`feedback_id`, `customer_id`, `reservation_id`, `rating`
 (9, 7, NULL, 5, 'MAJNDIJANDIUSDBAIUUA (Occupation: TEST)', '2026-02-11 16:00:28', NULL),
 (10, 7, NULL, 5, 'dsadadadaddd (Occupation: Test)', '2026-03-02 16:51:01', 4),
 (11, 7, NULL, 5, 'dsa', '2026-03-04 21:30:12', 4),
-(12, 7, NULL, 5, '1', '2026-03-04 21:30:27', 2);
+(12, 7, NULL, 5, '1', '2026-03-04 21:30:27', 2),
+(14, 7, NULL, 5, 'Great Experience 123344555 !!! ##WSS@#($$**@(@)@)', '2026-03-19 00:04:50', 2),
+(15, 11, NULL, 5, 'Great experience jsdndasdda', '2026-03-19 04:52:23', 2);
 
 -- --------------------------------------------------------
 
@@ -207,8 +196,7 @@ CREATE TABLE `reservations` (
   `branch_id` int(11) NOT NULL,
   `reservation_date` date NOT NULL,
   `check_out_date` date DEFAULT NULL,
-  `reservation_type` enum('Day','Night','Overnight') NOT NULL,
-  `number_of_guests` int(11) DEFAULT 1,
+  `reservation_type` enum('Day','Overnight') NOT NULL,
   `total_amount` decimal(10,2) NOT NULL,
   `payment_status` enum('Unpaid','Paid','Partial','Refunded') DEFAULT 'Unpaid',
   `notes` text DEFAULT NULL,
@@ -220,42 +208,47 @@ CREATE TABLE `reservations` (
 -- Dumping data for table `reservations`
 --
 
-INSERT INTO `reservations` (`reservation_id`, `customer_id`, `branch_id`, `reservation_date`, `check_out_date`, `reservation_type`, `number_of_guests`, `total_amount`, `payment_status`, `notes`, `status`, `created_at`) VALUES
-(1, 7, 1, '2026-02-05', NULL, 'Day', 1, 5000.00, 'Unpaid', NULL, 'Completed', '2026-02-06 05:55:32'),
-(2, 7, 1, '2026-02-05', NULL, 'Day', 1, 5000.00, 'Unpaid', NULL, 'Completed', '2026-02-06 05:55:32'),
-(4, 7, 4, '2026-02-08', NULL, 'Overnight', 1, 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:03:54'),
-(5, 7, 4, '2026-02-08', NULL, 'Overnight', 1, 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:05:30'),
-(6, 7, 1, '2026-02-15', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:25:17'),
-(7, 7, 1, '2026-02-15', NULL, 'Overnight', 1, 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:25:49'),
-(8, 7, 1, '2026-02-15', NULL, 'Overnight', 1, 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:28:25'),
-(9, 7, 1, '2026-02-15', NULL, 'Overnight', 1, 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:29:50'),
-(10, 7, 1, '2026-02-09', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 05:35:06'),
-(11, 7, 1, '2026-02-09', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 05:39:24'),
-(12, 7, 4, '2026-02-09', NULL, 'Overnight', 1, 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 05:40:29'),
-(13, 7, 1, '2026-02-19', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:03:17'),
-(14, 7, 1, '2026-02-19', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:03:39'),
-(15, 7, 1, '2026-02-20', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:19:52'),
-(16, 7, 1, '2026-02-20', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:25:25'),
-(17, 7, 1, '2026-02-20', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:27:09'),
-(18, 7, 1, '2026-03-05', NULL, 'Day', 1, 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:27:50'),
-(19, 7, 1, '2026-03-05', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:28:46'),
-(20, 7, 1, '2026-03-05', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:34:53'),
-(21, 7, 1, '2026-03-05', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:35:37'),
-(22, 7, 1, '2026-02-19', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Completed', '2026-02-11 07:55:54'),
-(23, 9, 1, '2026-02-19', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:44:52'),
-(24, 9, 1, '2026-02-26', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:46:26'),
-(25, 9, 1, '2026-02-26', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:46:35'),
-(26, 9, 1, '2026-02-26', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:46:55'),
-(27, 7, 4, '2026-02-24', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:50:44'),
-(28, 7, 4, '2026-02-26', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:55:52'),
-(29, 7, 1, '2026-02-28', NULL, 'Day', 1, 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:56:49'),
-(30, 7, 2, '2026-02-25', NULL, 'Day', 1, 900.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:59:28'),
-(31, 7, 1, '2026-02-26', NULL, 'Overnight', 1, 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 06:01:44'),
-(32, 7, 1, '2026-02-26', NULL, 'Overnight', 1, 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 07:30:11'),
-(33, 7, 1, '2026-02-28', NULL, 'Day', 1, 900.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 15:29:55'),
-(34, 7, 1, '2026-03-27', NULL, 'Overnight', 1, 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 15:35:15'),
-(35, 7, 2, '2026-02-28', NULL, 'Overnight', 1, 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-25 08:41:13'),
-(36, 7, 1, '2026-03-11', NULL, 'Overnight', 1, 1000.00, 'Unpaid', NULL, 'Pending', '2026-03-02 09:10:37');
+INSERT INTO `reservations` (`reservation_id`, `customer_id`, `branch_id`, `reservation_date`, `check_out_date`, `reservation_type`, `total_amount`, `payment_status`, `notes`, `status`, `created_at`) VALUES
+(1, 7, 1, '2026-02-05', NULL, 'Day', 5000.00, 'Unpaid', NULL, 'Completed', '2026-02-06 05:55:32'),
+(2, 7, 1, '2026-02-05', NULL, 'Day', 5000.00, 'Unpaid', NULL, 'Completed', '2026-02-06 05:55:32'),
+(4, 7, 4, '2026-02-08', NULL, 'Overnight', 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:03:54'),
+(5, 7, 4, '2026-02-08', NULL, 'Overnight', 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:05:30'),
+(6, 7, 1, '2026-02-15', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:25:17'),
+(7, 7, 1, '2026-02-15', NULL, 'Overnight', 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:25:49'),
+(8, 7, 1, '2026-02-15', NULL, 'Overnight', 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:28:25'),
+(9, 7, 1, '2026-02-15', NULL, 'Overnight', 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-07 12:29:50'),
+(10, 7, 1, '2026-02-09', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 05:35:06'),
+(11, 7, 1, '2026-02-09', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 05:39:24'),
+(12, 7, 4, '2026-02-09', NULL, 'Overnight', 10000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 05:40:29'),
+(13, 7, 1, '2026-02-19', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:03:17'),
+(14, 7, 1, '2026-02-19', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:03:39'),
+(15, 7, 1, '2026-02-20', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:19:52'),
+(16, 7, 1, '2026-02-20', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:25:25'),
+(17, 7, 1, '2026-02-20', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:27:09'),
+(18, 7, 1, '2026-03-05', NULL, 'Day', 9000.00, 'Unpaid', NULL, 'Pending', '2026-02-08 06:27:50'),
+(19, 7, 1, '2026-03-05', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:28:46'),
+(20, 7, 1, '2026-03-05', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:34:53'),
+(21, 7, 1, '2026-03-05', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-08 06:35:37'),
+(22, 7, 1, '2026-02-19', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Completed', '2026-02-11 07:55:54'),
+(23, 9, 1, '2026-02-19', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:44:52'),
+(24, 9, 1, '2026-02-26', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:46:26'),
+(25, 9, 1, '2026-02-26', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:46:35'),
+(26, 9, 1, '2026-02-26', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-11 10:46:55'),
+(27, 7, 4, '2026-02-24', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:50:44'),
+(28, 7, 4, '2026-02-26', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:55:52'),
+(29, 7, 1, '2026-02-28', NULL, 'Day', 1.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:56:49'),
+(30, 7, 2, '2026-02-25', NULL, 'Day', 900.00, 'Unpaid', NULL, 'Cancelled', '2026-02-22 12:59:28'),
+(31, 7, 1, '2026-02-26', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 06:01:44'),
+(32, 7, 1, '2026-02-26', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 07:30:11'),
+(33, 7, 1, '2026-02-28', NULL, 'Day', 900.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 15:29:55'),
+(34, 7, 1, '2026-03-27', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-24 15:35:15'),
+(35, 7, 2, '2026-02-28', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-02-25 08:41:13'),
+(36, 7, 1, '2026-03-11', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-03-02 09:10:37'),
+(37, 7, 3, '2026-03-20', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-03-18 14:45:08'),
+(38, 7, 4, '2026-03-19', NULL, 'Day', 900.00, 'Unpaid', NULL, 'Confirmed', '2026-03-18 14:52:28'),
+(39, 7, 1, '2026-03-20', NULL, 'Day', 900.00, 'Unpaid', NULL, 'Confirmed', '2026-03-18 17:50:26'),
+(40, 7, 4, '2026-03-21', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Confirmed', '2026-03-18 18:04:03'),
+(41, 11, 3, '2026-03-19', NULL, 'Overnight', 1000.00, 'Unpaid', NULL, 'Cancelled', '2026-03-18 18:23:03');
 
 -- --------------------------------------------------------
 
@@ -282,7 +275,9 @@ INSERT INTO `users` (`user_id`, `username`, `password_hash`, `role`, `is_active`
 (3, 'spongebob@bikini.bottom', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Customer', 1, 2),
 (4, 'squidward@bikini.bottom', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Customer', 1, 3),
 (5, 'test@gmail.com', '$2y$10$8.HWt5t.HW8swy4.ZFz6leAur1Fl07Kbm4AQwADZ6sePAA1I15Qri', 'Customer', 1, 4),
-(8, 'test12@gmail.com', '$2y$10$hy7hE.iPgv5re27TCVrPNOwypCE/6KlUchHfTkedEqHDNY5sr8HFC', 'Customer', 1, 7);
+(8, 'test12@gmail.com', '$2y$10$hy7hE.iPgv5re27TCVrPNOwypCE/6KlUchHfTkedEqHDNY5sr8HFC', 'Customer', 1, 7),
+(11, 'mjpgeronimo2023@plm.edu.ph', '$2y$10$HGUnulr60d7thSYiuVIYN.9rxfoxBHVs/W1xsGC8YpB8B8r4qsnoG', 'Customer', 1, 11),
+(12, 'newaccount@gmail.com', '$2y$10$Vv2vDAU4JdcOpXwSuutUgeottRPgmPJHsoouClzBZUwj9TmoOPxNC', 'Customer', 1, 12);
 
 -- --------------------------------------------------------
 
@@ -327,13 +322,6 @@ ALTER TABLE `amenities`
 --
 ALTER TABLE `branches`
   ADD PRIMARY KEY (`branch_id`);
-
---
--- Indexes for table `branch_capacity`
---
-ALTER TABLE `branch_capacity`
-  ADD PRIMARY KEY (`capacity_id`),
-  ADD KEY `branch_id` (`branch_id`);
 
 --
 -- Indexes for table `customers`
@@ -388,34 +376,28 @@ ALTER TABLE `branches`
   MODIFY `branch_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
--- AUTO_INCREMENT for table `branch_capacity`
---
-ALTER TABLE `branch_capacity`
-  MODIFY `capacity_id` int(11) NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT for table `customers`
 --
 ALTER TABLE `customers`
-  MODIFY `customer_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `customer_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
 --
 -- AUTO_INCREMENT for table `feedback`
 --
 ALTER TABLE `feedback`
-  MODIFY `feedback_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `feedback_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=16;
 
 --
 -- AUTO_INCREMENT for table `reservations`
 --
 ALTER TABLE `reservations`
-  MODIFY `reservation_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=37;
+  MODIFY `reservation_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=42;
 
 --
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
 --
 -- Constraints for dumped tables
@@ -426,12 +408,6 @@ ALTER TABLE `users`
 --
 ALTER TABLE `amenities`
   ADD CONSTRAINT `amenities_ibfk_1` FOREIGN KEY (`branch_id`) REFERENCES `branches` (`branch_id`) ON DELETE CASCADE;
-
---
--- Constraints for table `branch_capacity`
---
-ALTER TABLE `branch_capacity`
-  ADD CONSTRAINT `branch_capacity_ibfk_1` FOREIGN KEY (`branch_id`) REFERENCES `branches` (`branch_id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `feedback`
