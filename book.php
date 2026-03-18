@@ -42,8 +42,8 @@ $preselectedBranch = (is_numeric($preselectedBranch)) ? intval($preselectedBranc
                 <div class="form-group">
                     <label>Tour Type</label>
                     <select name="type">
-                        <option value="Day">Day Tour (₱9,000)</option>
-                        <option value="Overnight">Overnight (₱10,000)</option>
+                        <option value="Day">Day Tour (₱900)</option>
+                        <option value="Overnight">Overnight (₱1000)</option>
                     </select>
                 </div>
                 <button type="submit">PROCEED TO PAYMENT</button>

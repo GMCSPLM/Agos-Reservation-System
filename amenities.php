@@ -12,9 +12,6 @@ $amenities = $pdo->query("SELECT a.*, b.branch_name FROM amenities a JOIN branch
                     <h3><?= htmlspecialchars($a['amenity_name']) ?></h3>
                     <small style="color: #888; text-transform: uppercase;"><?= htmlspecialchars($a['branch_name']) ?></small>
                     <p style="margin-top: 10px;"><?= htmlspecialchars($a['description']) ?></p>
-                    <?php if($a['deposit_amount'] > 0): ?>
-                        <span class="price" style="font-size: 0.9rem;">Deposit: ₱<?= number_format($a['deposit_amount'], 2) ?></span>
-                    <?php endif; ?>
                     <span style="background: #e0f7fa; color: #006064; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;"><?= $a['availability'] ?></span>
                 </div>
             </div>
