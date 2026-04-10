@@ -1,15 +1,13 @@
 <?php 
 include 'header.php'; 
 
-// Capture pending booking intent from URL parameters (set when guest clicks a date)
-// Store in session so it survives the POST redirect
+// Capture pending booking intent from URL parameters
 if ($_SERVER["REQUEST_METHOD"] == "GET") {
     if (isset($_GET['redirect']) && $_GET['redirect'] === 'book' 
         && !empty($_GET['date']) && !empty($_GET['branch'])) {
         $_SESSION['pending_booking_date']   = $_GET['date'];
         $_SESSION['pending_booking_branch'] = $_GET['branch'];
     } else {
-        // Clear any stale pending booking if the user navigates to login normally
         unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
     }
 }
@@ -27,16 +25,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $_SESSION['customer_id'] = $user['customer_id'];
 
         if ($user['role'] == 'Admin') {
-            // Admins always go to their dashboard
             $redirect = "admin/dashboard.php";
         } elseif (!empty($_SESSION['pending_booking_date']) && !empty($_SESSION['pending_booking_branch'])) {
-            // User came from the calendar — resume the booking they started
             $date   = urlencode($_SESSION['pending_booking_date']);
             $branch = urlencode($_SESSION['pending_booking_branch']);
             unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
             $redirect = "book.php?date=$date&branch=$branch";
         } else {
-            // Normal login with no booking intent — go to home page
             $redirect = "index.php";
         }
 
@@ -51,11 +46,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <!-- EmailJS SDK -->
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
 <script>
-    // TODO: Replace with your actual EmailJS public key
     emailjs.init("bTi2PDWAACK7A9UPg");
 </script>
 
-<!-- LOGIN FORM -->
+<!-- ═══════════════════════════════════════════
+     LOGIN FORM
+════════════════════════════════════════════ -->
 <div class="auth-box" id="loginBox">
     <h2>Welcome Back</h2>
     <?php if(isset($error)) echo "<p style='color:red; text-align:center;'>$error</p>"; ?>
@@ -64,7 +60,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <input type="email" name="email" placeholder="Email Address" required>
         </div>
         <div class="form-group">
-            <input type="password" name="password" placeholder="Password" required>
+            <div class="pw-wrapper">
+                <input type="password" name="password" id="loginPassword" placeholder="Password" required>
+                <button type="button" class="pw-toggle" onclick="togglePw('loginPassword','loginEye')" tabindex="-1">
+                    <i class="fas fa-eye" id="loginEye"></i>
+                </button>
+            </div>
         </div>
         <button type="submit">LOG IN</button>
     </form>
@@ -74,7 +75,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <p style="text-align: center; margin-top: 10px;">New here? <a href="signup.php" style="color: var(--primary);">Create Account</a></p>
 </div>
 
-<!-- FORGOT PASSWORD - STEP 1: Enter Email -->
+<!-- ═══════════════════════════════════════════
+     FORGOT PASSWORD – STEP 1: Enter Email
+════════════════════════════════════════════ -->
 <div class="auth-box" id="forgotBox" style="display:none;">
     <h2>Forgot Password</h2>
     <p style="text-align:center; color:#666; margin-bottom:20px;">Enter your email to receive an OTP.</p>
@@ -82,13 +85,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <div class="form-group">
         <input type="email" id="forgotEmail" placeholder="Email Address" required>
     </div>
+    <!-- OTP attempt counter notice -->
+    <p id="otpLimitNotice" style="text-align:center; font-size:0.85rem; color:#888; margin-bottom:10px;"></p>
     <button onclick="sendOTP()" id="sendOtpBtn">SEND OTP</button>
     <p style="text-align: center; margin-top: 15px;">
         <a href="#" onclick="showLogin()" style="color: var(--primary);">Back to Login</a>
     </p>
 </div>
 
-<!-- FORGOT PASSWORD - STEP 2: OTP Verification -->
+<!-- ═══════════════════════════════════════════
+     FORGOT PASSWORD – STEP 2: OTP Verification
+════════════════════════════════════════════ -->
 <div class="auth-box" id="otpBox" style="display:none;">
     <h2>OTP Verification</h2>
     <p style="text-align:center; color:#666; margin-bottom:5px;">Enter the 6-digit code sent to your email.</p>
@@ -98,112 +105,190 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <input type="text" id="otpInput" placeholder="Enter OTP Code" maxlength="6" required>
     </div>
     <button onclick="verifyOTP()" id="verifyOtpBtn">VERIFY OTP</button>
-    <p style="text-align: center; margin-top: 15px;">
-        <a href="#" onclick="showForgot()" style="color: var(--primary);">Resend OTP</a>
+    <p style="text-align: center; margin-top: 15px;" id="resendRow">
+        <a href="#" onclick="handleResend()" style="color: var(--primary);">Resend OTP</a>
         &nbsp;|&nbsp;
         <a href="#" onclick="showLogin()" style="color: var(--primary);">Back to Login</a>
     </p>
 </div>
 
-<!-- FORGOT PASSWORD - STEP 3: New Password -->
+<!-- ═══════════════════════════════════════════
+     FORGOT PASSWORD – STEP 3: New Password
+════════════════════════════════════════════ -->
 <div class="auth-box" id="newPassBox" style="display:none;">
     <h2>New Password</h2>
     <p style="text-align:center; color:#666; margin-bottom:20px;">Set your new password below.</p>
     <div id="newPassMsg"></div>
+
+    <!-- New password with eye icon -->
     <div class="form-group">
-        <input type="password" id="newPassword" placeholder="New Password" required>
+        <div class="pw-wrapper">
+            <input type="password" id="newPassword" placeholder="New Password" required>
+            <button type="button" class="pw-toggle" onclick="togglePw('newPassword','eyeNew')" tabindex="-1">
+                <i class="fas fa-eye" id="eyeNew"></i>
+            </button>
+        </div>
     </div>
+
+    <!-- Confirm password with eye icon -->
     <div class="form-group">
-        <input type="password" id="confirmPassword" placeholder="Confirm Password" required>
+        <div class="pw-wrapper">
+            <input type="password" id="confirmPassword" placeholder="Confirm Password" required>
+            <button type="button" class="pw-toggle" onclick="togglePw('confirmPassword','eyeConfirm')" tabindex="-1">
+                <i class="fas fa-eye" id="eyeConfirm"></i>
+            </button>
+        </div>
     </div>
+
     <button onclick="resetPassword()" id="resetBtn">RESET PASSWORD</button>
 </div>
 
 <script>
-    let generatedOTP = "";
-    let otpExpiry = null;
+    // ── Globals ───────────────────────────────────────────────
+    let generatedOTP  = "";
+    let otpExpiry     = null;
     let timerInterval = null;
     let verifiedEmail = "";
 
+    // OTP-send attempt tracking (max 3 per session)
+    const OTP_LIMIT = 3;
+    let otpSendCount = 0;
+
+    // ── Eye toggle ────────────────────────────────────────────
+    function togglePw(inputId, iconId) {
+        const inp  = document.getElementById(inputId);
+        const icon = document.getElementById(iconId);
+        if (inp.type === 'password') {
+            inp.type = 'text';
+            icon.classList.replace('fa-eye', 'fa-eye-slash');
+        } else {
+            inp.type = 'password';
+            icon.classList.replace('fa-eye-slash', 'fa-eye');
+        }
+    }
+
+    // ── Navigation helpers ────────────────────────────────────
     function showLogin() {
-        document.getElementById('loginBox').style.display = 'block';
-        document.getElementById('forgotBox').style.display = 'none';
-        document.getElementById('otpBox').style.display = 'none';
-        document.getElementById('newPassBox').style.display = 'none';
+        document.getElementById('loginBox').style.display    = 'block';
+        document.getElementById('forgotBox').style.display   = 'none';
+        document.getElementById('otpBox').style.display      = 'none';
+        document.getElementById('newPassBox').style.display  = 'none';
         clearInterval(timerInterval);
     }
 
     function showForgot() {
-        document.getElementById('loginBox').style.display = 'none';
-        document.getElementById('forgotBox').style.display = 'block';
-        document.getElementById('otpBox').style.display = 'none';
-        document.getElementById('newPassBox').style.display = 'none';
-        document.getElementById('forgotMsg').innerHTML = '';
+        document.getElementById('loginBox').style.display    = 'none';
+        document.getElementById('forgotBox').style.display   = 'block';
+        document.getElementById('otpBox').style.display      = 'none';
+        document.getElementById('newPassBox').style.display  = 'none';
+        document.getElementById('forgotMsg').innerHTML       = '';
         clearInterval(timerInterval);
+        updateOtpLimitNotice();
     }
 
-function sendOTP() {
-    const email = document.getElementById('forgotEmail').value.trim();
-    const btn = document.getElementById('sendOtpBtn');
-    const msg = document.getElementById('forgotMsg');
-
-    if (!email) {
-        msg.innerHTML = "<p style='color:red; text-align:center;'>Please enter your email.</p>";
-        return;
+    function updateOtpLimitNotice() {
+        const notice  = document.getElementById('otpLimitNotice');
+        const btn     = document.getElementById('sendOtpBtn');
+        const remaining = OTP_LIMIT - otpSendCount;
+        if (remaining <= 0) {
+            notice.innerHTML = "<span style='color:#d32f2f; font-weight:600;'>OTP limit reached. Please try again later.</span>";
+            btn.disabled = true;
+        } else {
+            notice.textContent = `OTP attempts remaining: ${remaining} / ${OTP_LIMIT}`;
+        }
     }
 
-    btn.disabled = true;
-    btn.textContent = "Checking...";
+    // ── Send OTP (max 3 times) ────────────────────────────────
+    function sendOTP() {
+        const email = document.getElementById('forgotEmail').value.trim();
+        const btn   = document.getElementById('sendOtpBtn');
+        const msg   = document.getElementById('forgotMsg');
 
-    // ✅ Step 1: Validate email against the database first
-    fetch('check_email.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (!data.exists) {
-            btn.disabled = false;
-            btn.textContent = "SEND OTP";
-            msg.innerHTML = `<p style='color:red; text-align:center;'>${data.message}</p>`;
+        if (!email) {
+            msg.innerHTML = "<p style='color:red; text-align:center;'>Please enter your email.</p>";
             return;
         }
 
-        // ✅ Step 2: Email exists — generate and send OTP
-        generatedOTP = Math.floor(100000 + Math.random() * 900000).toString();
-        otpExpiry = Date.now() + (5 * 60 * 1000);
-        verifiedEmail = email;
+        if (otpSendCount >= OTP_LIMIT) {
+            msg.innerHTML = "<p style='color:red; text-align:center;'>You have reached the maximum OTP requests. Please try again later.</p>";
+            btn.disabled = true;
+            return;
+        }
 
-        btn.textContent = "Sending...";
+        btn.disabled = true;
+        btn.textContent = "Checking...";
 
-        emailjs.send("se_project", "template_5revkij", {
-            to_email: email,
-            otp_code: generatedOTP,
-            expiry_time: "5 minutes"
-        }).then(function() {
+        // Step 1: Validate email in database
+        fetch('check_email.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.exists) {
+                btn.disabled = false;
+                btn.textContent = "SEND OTP";
+                msg.innerHTML = `<p style='color:red; text-align:center;'>${data.message}</p>`;
+                return;
+            }
+
+            // Step 2: Generate OTP and send
+            generatedOTP  = Math.floor(100000 + Math.random() * 900000).toString();
+            otpExpiry     = Date.now() + (5 * 60 * 1000);
+            verifiedEmail = email;
+
+            btn.textContent = "Sending...";
+
+            emailjs.send("se_project", "template_5revkij", {
+                to_email: email,
+                otp_code: generatedOTP,
+                expiry_time: "5 minutes"
+            }).then(function() {
+                otpSendCount++;
+                btn.disabled = false;
+                btn.textContent = "SEND OTP";
+
+                document.getElementById('forgotBox').style.display = 'none';
+                document.getElementById('otpBox').style.display    = 'block';
+                document.getElementById('otpMsg').innerHTML        = '';
+
+                // Show remaining attempts in OTP box
+                if (OTP_LIMIT - otpSendCount > 0) {
+                    document.getElementById('otpMsg').innerHTML =
+                        `<p style='color:#888; text-align:center; font-size:0.85rem;'>
+                            OTP resend attempts remaining: ${OTP_LIMIT - otpSendCount}
+                         </p>`;
+                }
+
+                startTimer();
+            }).catch(function(error) {
+                btn.disabled = false;
+                btn.textContent = "SEND OTP";
+                msg.innerHTML = "<p style='color:red; text-align:center;'>Failed to send OTP. Please try again.</p>";
+                console.error("EmailJS error:", error);
+            });
+        })
+        .catch(() => {
             btn.disabled = false;
             btn.textContent = "SEND OTP";
-
-            document.getElementById('forgotBox').style.display = 'none';
-            document.getElementById('otpBox').style.display = 'block';
-            document.getElementById('otpMsg').innerHTML = '';
-
-            startTimer();
-        }).catch(function(error) {
-            btn.disabled = false;
-            btn.textContent = "SEND OTP";
-            msg.innerHTML = "<p style='color:red; text-align:center;'>Failed to send OTP. Please try again.</p>";
-            console.error("EmailJS error:", error);
+            msg.innerHTML = "<p style='color:red; text-align:center;'>Something went wrong. Please try again.</p>";
         });
-    })
-    .catch(() => {
-        btn.disabled = false;
-        btn.textContent = "SEND OTP";
-        msg.innerHTML = "<p style='color:red; text-align:center;'>Something went wrong. Please try again.</p>";
-    });
-}
+    }
 
+    // ── Handle Resend (respects the 3-OTP cap) ────────────────
+    function handleResend() {
+        if (otpSendCount >= OTP_LIMIT) {
+            document.getElementById('otpMsg').innerHTML =
+                "<p style='color:red; text-align:center;'>OTP limit reached. Please try again later.</p>";
+            document.getElementById('resendRow').innerHTML =
+                "<a href='#' onclick='showLogin()' style='color: var(--primary);'>Back to Login</a>";
+            return;
+        }
+        showForgot();
+    }
+
+    // ── Timer ─────────────────────────────────────────────────
     function startTimer() {
         clearInterval(timerInterval);
         timerInterval = setInterval(function() {
@@ -216,13 +301,14 @@ function sendOTP() {
             } else {
                 const mins = Math.floor(remaining / 60);
                 const secs = remaining % 60;
-                document.getElementById('otpTimer').textContent = 
+                document.getElementById('otpTimer').textContent =
                     `OTP expires in: ${mins}:${secs.toString().padStart(2, '0')}`;
                 document.getElementById('otpTimer').style.color = "var(--primary)";
             }
         }, 1000);
     }
 
+    // ── Verify OTP ────────────────────────────────────────────
     function verifyOTP() {
         const inputOTP = document.getElementById('otpInput').value.trim();
         const msg = document.getElementById('otpMsg');
@@ -239,19 +325,20 @@ function sendOTP() {
 
         if (inputOTP === generatedOTP) {
             clearInterval(timerInterval);
-            document.getElementById('otpBox').style.display = 'none';
+            document.getElementById('otpBox').style.display     = 'none';
             document.getElementById('newPassBox').style.display = 'block';
-            document.getElementById('newPassMsg').innerHTML = '';
+            document.getElementById('newPassMsg').innerHTML     = '';
         } else {
             msg.innerHTML = "<p style='color:red; text-align:center;'>Invalid OTP. Please try again.</p>";
         }
     }
 
+    // ── Reset Password (rejects old password via server) ──────
     function resetPassword() {
-        const newPass = document.getElementById('newPassword').value;
+        const newPass     = document.getElementById('newPassword').value;
         const confirmPass = document.getElementById('confirmPassword').value;
-        const msg = document.getElementById('newPassMsg');
-        const btn = document.getElementById('resetBtn');
+        const msg         = document.getElementById('newPassMsg');
+        const btn         = document.getElementById('resetBtn');
 
         if (!newPass || !confirmPass) {
             msg.innerHTML = "<p style='color:red; text-align:center;'>Please fill in both fields.</p>";
@@ -271,21 +358,25 @@ function sendOTP() {
         btn.disabled = true;
         btn.textContent = "Resetting...";
 
-        // Send new password to server via AJAX
+        // Server-side handles old-password rejection via check_old_password flag
         fetch('reset_password.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: verifiedEmail, password: newPass })
+            body: JSON.stringify({
+                email:              verifiedEmail,
+                password:           newPass,
+                reject_old_password: true   // tells server to compare against current hash
+            })
         })
         .then(res => res.json())
         .then(data => {
             btn.disabled = false;
             btn.textContent = "RESET PASSWORD";
             if (data.success) {
-                msg.innerHTML = "<p style='color:green; text-align:center;'>Password reset successful! Redirecting...</p>";
+                msg.innerHTML = "<p style='color:green; text-align:center;'>Password reset successful! Redirecting…</p>";
                 setTimeout(() => showLogin(), 2000);
             } else {
-                msg.innerHTML = "<p style='color:red; text-align:center;'>" + data.message + "</p>";
+                msg.innerHTML = `<p style='color:red; text-align:center;'>${data.message}</p>`;
             }
         })
         .catch(() => {
