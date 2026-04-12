@@ -72,12 +72,16 @@ setTimeout(() => {
 
 $branches = $pdo->query("SELECT * FROM branches")->fetchAll();
 $amenities = $pdo->query("SELECT a.*, b.branch_name FROM amenities a JOIN branches b ON a.branch_id = b.branch_id")->fetchAll();
-$feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 6")->fetchAll();
+$feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 9")->fetchAll();
 
 // Calendar Variables
 $selectedMonth = $_GET['month'] ?? date('m');
 $selectedYear = $_GET['year'] ?? date('Y');
-$selectedBranch = $_GET['branch'] ?? 'all';
+// Default to the first branch instead of 'all' — the "All Branches" option has been removed
+$firstBranch    = $branches[0]['branch_id'] ?? null;
+$selectedBranch = $_GET['branch'] ?? $firstBranch;
+// Reject 'all' in case it arrives via a stale URL
+if ($selectedBranch === 'all') $selectedBranch = $firstBranch;
 
 // Validate inputs
 $selectedMonth = max(1, min(12, intval($selectedMonth)));
@@ -87,40 +91,29 @@ $monthName = date('F Y', strtotime("$selectedYear-$selectedMonth-01"));
 $daysInMonth = date('t', strtotime("$selectedYear-$selectedMonth-01"));
 $firstDayOfWeek = date('N', strtotime("$selectedYear-$selectedMonth-01")); 
 
-// Build query based on branch selection
-if ($selectedBranch === 'all') {
-    // For "all branches", show if ANY branch is fully booked
-    $stmt = $pdo->prepare("
-        SELECT reservation_date, COUNT(DISTINCT branch_id) as booked_branches
-        FROM reservations 
-        WHERE MONTH(reservation_date) = ? 
-        AND YEAR(reservation_date) = ? 
-        AND status IN ('Confirmed', 'Pending')
-        GROUP BY reservation_date
-    ");
-    $stmt->execute([$selectedMonth, $selectedYear]);
-    $bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Create lookup array
-    $bookingsByDate = [];
-    foreach ($bookings as $b) {
-        $bookingsByDate[$b['reservation_date']] = $b['booked_branches'];
-    }
-    
-    $totalBranches = count($branches);
-} else {
-    // For specific branch, show if THAT branch is booked
-    $stmt = $pdo->prepare("
-        SELECT reservation_date, COUNT(*) as booking_count
-        FROM reservations 
-        WHERE branch_id = ?
-        AND MONTH(reservation_date) = ? 
-        AND YEAR(reservation_date) = ? 
-        AND status IN ('Confirmed', 'Pending')
-        GROUP BY reservation_date
-    ");
-    $stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
-    $bookings = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+// ─── Slot-aware availability query ───────────────────────────────────────────
+// Each date has two discrete booking slots: "Day" (day tour) and "Overnight".
+// A date is only fully booked when BOTH slots are taken for the selected branch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// For the selected branch: fetch which reservation_type slots are taken on each date.
+// GROUP BY (date, reservation_type) so one record = one booked slot, not one record per guest.
+$stmt = $pdo->prepare("
+    SELECT reservation_date, reservation_type
+    FROM   reservations
+    WHERE  branch_id = ?
+      AND  MONTH(reservation_date) = ?
+      AND  YEAR(reservation_date)  = ?
+      AND  status IN ('Confirmed', 'Pending')
+    GROUP BY reservation_date, reservation_type
+");
+$stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
+
+// $slotsByDate['2025-06-15']['Day']       = true  → Day slot is taken
+// $slotsByDate['2025-06-15']['Overnight'] = true  → Overnight slot is taken
+$slotsByDate = [];
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $slotsByDate[$row['reservation_date']][$row['reservation_type']] = true;
 }
 
 // Calculate previous and next month
@@ -570,6 +563,41 @@ if ($nextMonth > 12) {
     margin-top: 4px;
 }
 
+/* ── Slot pills: Day / Night badges inside each calendar cell ── */
+.slot-pills {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 5px;
+}
+
+.slot-pill {
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 10px;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+/* Available slot → green outline */
+.slot-open {
+    background: rgba(46, 125, 50, 0.10);
+    color: #2e7d32;
+    border: 1px solid #81c784;
+}
+
+/* Taken slot → muted red with strikethrough */
+.slot-taken {
+    background: rgba(198, 40, 40, 0.08);
+    color: #b71c1c;
+    border: 1px solid #ef9a9a;
+    text-decoration: line-through;
+    opacity: 0.75;
+}
+
 @media (max-width: 768px) {
     .calendar-controls {
         flex-direction: column;
@@ -605,6 +633,115 @@ if ($nextMonth > 12) {
     .day-status {
         font-size: 0.7rem;
         padding: 2px 6px;
+    }
+}
+
+/* ── "What They Say" Redesigned Feedback Cards ─────────────────────────────── */
+.feedback-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+    margin-top: 16px;
+}
+
+.feedback-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 24px 22px 20px;
+    box-shadow: 0 4px 18px rgba(2, 62, 138, 0.08);
+    border-top: 4px solid #0077b6;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.feedback-card::before {
+    content: '\201C';
+    position: absolute;
+    top: -6px;
+    right: 16px;
+    font-size: 5.5rem;
+    line-height: 1;
+    color: #0077b6;
+    opacity: 0.08;
+    font-family: Georgia, serif;
+    pointer-events: none;
+}
+
+.feedback-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(2, 62, 138, 0.14);
+}
+
+.feedback-card-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.feedback-card-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #023e8a;
+    font-family: 'Poppins', sans-serif;
+    letter-spacing: 0.2px;
+}
+
+.feedback-card-stars {
+    display: flex;
+    gap: 3px;
+}
+
+.feedback-card-stars i {
+    font-size: 0.85rem;
+    color: #ffb703;
+}
+
+.feedback-card-comment {
+    font-size: 0.92rem;
+    color: #444;
+    line-height: 1.65;
+    font-style: italic;
+    flex-grow: 1;
+    border-left: 3px solid rgba(0, 119, 182, 0.2);
+    padding-left: 12px;
+    margin: 0;
+}
+
+.feedback-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(2, 62, 138, 0.08);
+    margin-top: auto;
+}
+
+.feedback-card-branch {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #0077b6;
+    background: rgba(0, 119, 182, 0.08);
+    padding: 3px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.1px;
+}
+
+.feedback-card-date {
+    font-size: 0.76rem;
+    color: #999;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .feedback-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
     }
 }
 </style>
@@ -693,13 +830,13 @@ if ($nextMonth > 12) {
                 </div>
 
                 <div>
-                    <textarea name="comments" id="feedbackComments" class="custom-textarea" placeholder="Tell us your opinion" maxlength="500" required></textarea>
+                    <textarea name="comments" id="feedbackComments" class="custom-textarea" placeholder="Tell us your opinion" maxlength="50" required></textarea>
                     <div class="word-count-bar">
                         <span class="word-count-label">Chars:</span>
                         <div class="word-count-progress">
                             <div class="word-count-progress-fill" id="wcFill" style="width:0%"></div>
                         </div>
-                        <span class="word-count-num" id="wcNum">0 / 500</span>
+                        <span class="word-count-num" id="wcNum">0 / 50</span>
                     </div>
                     <span class="helper-text">How would you describe your stay with us?</span>
                 </div>
@@ -724,19 +861,30 @@ if ($nextMonth > 12) {
     <div class="feedback-grid">
         <?php foreach($feedbacks as $f): ?>
             <div class="feedback-card">
-                <div class="rating">
-                    <?php for($i=0; $i<$f['rating']; $i++) echo '<i class="fas fa-star"></i>'; ?>
-                </div>
-                <p>"<?= htmlspecialchars($f['comments']) ?>"</p>
-                <div style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
-                    <div style="width: 40px; height: 40px; background: #ddd; border-radius: 50%;"></div>
-                    <div>
-                        <strong style="display: block;"><?= htmlspecialchars($f['full_name']) ?></strong>
-                        <?php if (!empty($f['branch_name'])): ?>
-                            <small style="color: #023e8a; font-weight: 600;"><?= htmlspecialchars($f['branch_name']) ?></small><br>
-                        <?php endif; ?>
-                        <small style="color: #888;"><?= date('M d, Y', strtotime($f['feedback_date'])) ?></small>
+                <div class="feedback-card-header">
+                    <span class="feedback-card-name"><?= htmlspecialchars($f['full_name']) ?></span>
+                    <div class="feedback-card-stars">
+                        <?php for($i = 0; $i < intval($f['rating']); $i++): ?>
+                            <i class="fas fa-star"></i>
+                        <?php endfor; ?>
+                        <?php for($i = intval($f['rating']); $i < 5; $i++): ?>
+                            <i class="far fa-star" style="color:#ddd;"></i>
+                        <?php endfor; ?>
                     </div>
+                </div>
+                <p class="feedback-card-comment"><?= htmlspecialchars($f['comments']) ?></p>
+                <div class="feedback-card-footer">
+                    <?php if (!empty($f['branch_name'])): ?>
+                        <span class="feedback-card-branch">
+                            <i class="fas fa-map-marker-alt" style="font-size:0.7rem;"></i>
+                            <?= htmlspecialchars($f['branch_name']) ?>
+                        </span>
+                    <?php else: ?>
+                        <span></span>
+                    <?php endif; ?>
+                    <span class="feedback-card-date">
+                        <?= date('M d, Y', strtotime($f['feedback_date'])) ?>
+                    </span>
                 </div>
             </div>
         <?php endforeach; ?>
@@ -776,7 +924,6 @@ if ($nextMonth > 12) {
                 <i class="fas fa-building"></i> Select Branch:
             </label>
             <select id="branchSelect" class="branch-select" onchange="changeBranch(this.value)">
-                <option value="all" <?= $selectedBranch === 'all' ? 'selected' : '' ?>>All Branches</option>
                 <?php foreach($branches as $b): ?>
                     <option value="<?= $b['branch_id'] ?>" <?= $selectedBranch == $b['branch_id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($b['branch_name']) ?>
@@ -798,7 +945,7 @@ if ($nextMonth > 12) {
             <div class="calendar-day-header">Sat</div>
             <div class="calendar-day-header">Sun</div>
 
-            <?php 
+            <?php
             // Empty cells before first day
             for ($x = 1; $x < $firstDayOfWeek; $x++) {
                 echo "<div></div>";
@@ -806,62 +953,51 @@ if ($nextMonth > 12) {
 
             // Days of the month
             for ($day = 1; $day <= $daysInMonth; $day++) {
-                $dateStr = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
-                $isPast = strtotime($dateStr) < strtotime(date('Y-m-d'));
+                $dateStr     = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
+                $isPast      = strtotime($dateStr) < strtotime(date('Y-m-d'));
                 $isClickable = false;
-                
+                $slotPillsHtml  = '';
+                $extraInfoHtml  = '';
+
                 if ($isPast) {
-                    // Past dates
-                    $class = "day-past";
+                    $class      = "day-past";
                     $statusText = "Past";
-                    $statusClass = "";
                 } else {
-                    if ($selectedBranch === 'all') {
-                        // All branches view
-                        $bookedCount = isset($bookingsByDate[$dateStr]) ? $bookingsByDate[$dateStr] : 0;
-                        
-                        if ($bookedCount >= $totalBranches) {
-                            $class = "day-booked";
+                        // Check each reservation_type slot independently.
+                        $dayBooked       = isset($slotsByDate[$dateStr]['Day']);
+                        $overnightBooked = isset($slotsByDate[$dateStr]['Overnight']);
+
+                        if ($dayBooked && $overnightBooked) {
+                            // Both slots occupied → truly fully booked
+                            $class      = "day-booked";
                             $statusText = "Fully Booked";
-                        } elseif ($bookedCount > 0) {
-                            $class = "day-limited";
-                            $statusText = "Limited";
-                            $availableCount = $totalBranches - $bookedCount;
+                        } elseif ($dayBooked || $overnightBooked) {
+                            // One slot still open → partial availability
+                            $class      = "day-limited";
+                            $statusText = "Partial";
                             $isClickable = true;
                         } else {
-                            $class = "day-available";
+                            // No slots taken → completely available
+                            $class      = "day-available";
                             $statusText = "Available";
                             $isClickable = true;
                         }
-                    } else {
-                        // Specific branch view
-                        $isBooked = isset($bookings[$dateStr]) && $bookings[$dateStr] > 0;
-                        
-                        if ($isBooked) {
-                            $class = "day-booked";
-                            $statusText = "Booked";
-                        } else {
-                            $class = "day-available";
-                            $statusText = "Available";
-                            $isClickable = true;
-                        }
-                    }
+
+                        // Slot pills: show Day and Overnight status as mini-badges
+                        $slotPillsHtml  = "<div class='slot-pills'>";
+                        $slotPillsHtml .= "<span class='slot-pill " . ($dayBooked       ? 'slot-taken' : 'slot-open') . "'>&#9728; Day</span>";
+                        $slotPillsHtml .= "<span class='slot-pill " . ($overnightBooked ? 'slot-taken' : 'slot-open') . "'>&#9790; Night</span>";
+                        $slotPillsHtml .= "</div>";
                 }
 
-                // Add clickable class and onclick event
                 $clickableClass = $isClickable ? 'clickable' : '';
-                $onclickAttr = $isClickable ? "onclick=\"bookDate('$dateStr', '$selectedBranch')\"" : '';
-                
-                echo "<div class='calendar-day $class $clickableClass' $onclickAttr data-date='$dateStr'>";
-                echo "<div class='day-number'>$day</div>";
-                echo "<div class='day-status'>$statusText</div>";
-                
-                // Show available count for limited availability
-                if (!$isPast && $selectedBranch === 'all' && isset($availableCount) && $class === 'day-limited') {
-                    echo "<div class='booking-count'>$availableCount available</div>";
-                    unset($availableCount); // Reset for next iteration
-                }
-                
+                $onclickAttr    = $isClickable ? "onclick=\"bookDate('{$dateStr}', '{$selectedBranch}')\"" : '';
+
+                echo "<div class='calendar-day {$class} {$clickableClass}' {$onclickAttr} data-date='{$dateStr}'>";
+                echo "<div class='day-number'>{$day}</div>";
+                echo "<div class='day-status'>{$statusText}</div>";
+                echo $slotPillsHtml;
+                echo $extraInfoHtml;
                 echo "</div>";
             }
             ?>
@@ -873,15 +1009,13 @@ if ($nextMonth > 12) {
                 <div class="legend-box legend-available"></div>
                 <span>Available</span>
             </div>
-            <?php if ($selectedBranch === 'all'): ?>
             <div class="legend-item">
                 <div class="legend-box legend-limited"></div>
-                <span>Limited Availability</span>
+                <span>Partial (1 slot open)</span>
             </div>
-            <?php endif; ?>
             <div class="legend-item">
                 <div class="legend-box legend-booked"></div>
-                <span><?= $selectedBranch === 'all' ? 'Fully Booked' : 'Booked' ?></span>
+                <span>Fully Booked</span>
             </div>
             <div class="legend-item">
                 <div class="legend-box legend-past"></div>
@@ -889,12 +1023,7 @@ if ($nextMonth > 12) {
             </div>
         </div>
         
-        <?php if ($selectedBranch === 'all'): ?>
-        <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
-            <i class="fas fa-info-circle"></i> Showing availability across all <?= count($branches) ?> branches. 
-            Select a specific branch to see detailed availability.
-        </p>
-        <?php else: 
+        <?php
             $branchName = '';
             foreach($branches as $b) {
                 if ($b['branch_id'] == $selectedBranch) {
@@ -904,9 +1033,9 @@ if ($nextMonth > 12) {
             }
         ?>
         <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
-            <i class="fas fa-info-circle"></i> Showing availability for <strong><?= htmlspecialchars($branchName) ?></strong>
+            <i class="fas fa-info-circle"></i> Showing slot availability for <strong><?= htmlspecialchars($branchName) ?></strong>.
+            Each date has a <strong>Day Tour</strong> and an <strong>Overnight</strong> slot — booking one leaves the other open.
         </p>
-        <?php endif; ?>
     </div>
 </section>
 
@@ -914,7 +1043,7 @@ if ($nextMonth > 12) {
 const wcTextarea = document.getElementById('feedbackComments');
 const wcNum      = document.getElementById('wcNum');
 const wcFill     = document.getElementById('wcFill');
-const WC_MAX     = 500;
+const WC_MAX     = 50;
 const WC_MIN     = 20;
 
 function updateCharCount() {
@@ -989,7 +1118,7 @@ function showLoginModal(date, branchId) {
         day: 'numeric' 
     });
     
-    const branchText = branchId === 'all' ? 'any available branch' : 'this branch';
+    const branchText = 'this branch';
     
     const modal = document.createElement('div');
     modal.id = 'loginModal';

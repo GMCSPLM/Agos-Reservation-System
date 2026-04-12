@@ -28,14 +28,23 @@ $pdo->query("
 // Fetch analytics data
 $stats = [];
 
-// Overview stats
-$stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending'")->fetchColumn();
-$stats['todays_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
-$stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
-$stats['this_month_revenue'] = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
-$stats['total_customers'] = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
-$stats['avg_rating'] = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = MONTH(CURDATE())")->fetchColumn();
+// ── Analytics date filter ─────────────────────────────────────────────────
+$current_year  = (int)date('Y');
+$current_month = (int)date('m');
+$filter_month  = (isset($_GET['month']) && (int)$_GET['month'] >= 1 && (int)$_GET['month'] <= 12)
+                 ? (int)$_GET['month'] : $current_month;
+$filter_year   = (isset($_GET['year'])  && (int)$_GET['year']  >= 2020 && (int)$_GET['year']  <= $current_year + 1)
+                 ? (int)$_GET['year']  : $current_year;
+$is_default_period = ($filter_month === $current_month && $filter_year === $current_year);
 
+// Overview stats
+// Only count Pending reservations that have been paid
+$stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending' AND payment_status = 'Paid'")->fetchColumn();
+$stats['todays_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
+$stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = $filter_month AND YEAR(reservation_date) = $filter_year AND status IN ('Confirmed', 'Completed')")->fetchColumn();
+$stats['this_month_revenue'] = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = $filter_month AND YEAR(reservation_date) = $filter_year AND status IN ('Confirmed', 'Completed')")->fetchColumn();
+$stats['total_customers'] = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
+$stats['avg_rating'] = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = $filter_month AND YEAR(feedback_date) = $filter_year")->fetchColumn();
 // Monthly booking trends (last 12 months)
 $monthly_query = "
     SELECT 
@@ -72,6 +81,8 @@ $branch_query = "
         ), 0) as avg_rating
     FROM branches b
     LEFT JOIN reservations r ON b.branch_id = r.branch_id
+        AND MONTH(r.reservation_date) = $filter_month
+        AND YEAR(r.reservation_date)  = $filter_year
     GROUP BY b.branch_id, b.branch_name
     ORDER BY total_revenue DESC
 ";
@@ -85,6 +96,8 @@ $type_query = "
         SUM(total_amount) as revenue
     FROM reservations
     WHERE status IN ('Confirmed', 'Completed')
+      AND MONTH(reservation_date) = $filter_month
+      AND YEAR(reservation_date)  = $filter_year
     GROUP BY reservation_type
 ";
 $reservation_types = $pdo->query($type_query)->fetchAll(PDO::FETCH_ASSOC);
@@ -95,17 +108,60 @@ if ($view === 'customers') {
     $pageTitle = "Registered Customers";
 } elseif ($view === 'analytics') {
     $pageTitle = "Booking Analytics";
+} elseif ($view === 'feedback') {
+    $pageTitle = "User Feedback";
+
+    // Pagination for feedback
+    $fb_per_page  = 10;
+    $fb_page      = max(1, (int)($_GET['page'] ?? 1));
+    $fb_total     = $pdo->query("SELECT COUNT(*) FROM feedback")->fetchColumn();
+    $fb_pages     = max(1, ceil($fb_total / $fb_per_page));
+    $fb_page      = min($fb_page, $fb_pages);
+    $fb_offset    = ($fb_page - 1) * $fb_per_page;
+
+    // Rating filter
+    $allowed_ratings = ['All', '1', '2', '3', '4', '5'];
+    $filter_rating   = (isset($_GET['rating']) && in_array($_GET['rating'], $allowed_ratings))
+                       ? $_GET['rating'] : 'All';
+    $rating_where    = ($filter_rating !== 'All') ? "WHERE f.rating = " . (int)$filter_rating : "";
+
+    $fb_total = $pdo->query("SELECT COUNT(*) FROM feedback f $rating_where")->fetchColumn();
+    $fb_pages = max(1, ceil($fb_total / $fb_per_page));
+    $fb_page  = min($fb_page, $fb_pages);
+    $fb_offset = ($fb_page - 1) * $fb_per_page;
+
+    $feedback_data = $pdo->query("
+        SELECT f.*, c.full_name, b.branch_name
+        FROM feedback f
+        LEFT JOIN customers c ON f.customer_id = c.customer_id
+        LEFT JOIN branches  b ON f.branch_id   = b.branch_id
+        $rating_where
+        ORDER BY f.feedback_date DESC
+        LIMIT $fb_per_page OFFSET $fb_offset
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // Summary stats for feedback header cards
+    $fb_stats['total']   = $pdo->query("SELECT COUNT(*) FROM feedback")->fetchColumn();
+    $fb_stats['avg']     = $pdo->query("SELECT COALESCE(AVG(rating),0) FROM feedback")->fetchColumn();
+    $fb_stats['5star']   = $pdo->query("SELECT COUNT(*) FROM feedback WHERE rating = 5")->fetchColumn();
+    $fb_stats['1star']   = $pdo->query("SELECT COUNT(*) FROM feedback WHERE rating = 1")->fetchColumn();
 } else {
-    // Filter
+// Filter
     $allowed_statuses = ['All', 'Pending', 'Confirmed', 'Completed', 'Cancelled'];
     $filter_status = isset($_GET['status']) && in_array($_GET['status'], $allowed_statuses)
                      ? $_GET['status'] : 'All';
 
+    // NEW: Exclude unpaid checkout holds from the admin view globally
+    $exclude_holds = "NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')";
+    
+    $where_clause = "WHERE " . $exclude_holds;
+    if ($filter_status !== 'All') {
+        $where_clause .= " AND r.status = " . $pdo->quote($filter_status);
+    }
+
     // Pagination
     $per_page = 10;
     $current_page = max(1, (int)($_GET['page'] ?? 1));
-    $where_clause = $filter_status !== 'All'
-                    ? "WHERE r.status = " . $pdo->quote($filter_status) : "";
     $total_rows   = $pdo->query("SELECT COUNT(*) FROM reservations r $where_clause")->fetchColumn();
     $total_pages  = max(1, ceil($total_rows / $per_page));
     $current_page = min($current_page, $total_pages);
@@ -429,6 +485,191 @@ if ($view === 'customers') {
 .page-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
 .page-btn.disabled { opacity: 0.35; pointer-events: none; }
 .page-info { font-size: 0.82rem; color: #999; margin-left: 6px; }
+
+/* ── Feedback Section ─────────────────────────────────────── */
+.feedback-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1.2rem;
+    margin-bottom: 2rem;
+}
+.fb-stat {
+    background: white;
+    border-radius: 14px;
+    padding: 1.2rem 1.5rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.07);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.fb-stat:hover { transform: translateY(-4px); box-shadow: 0 8px 22px rgba(0,0,0,0.11); }
+.fb-stat .fb-icon {
+    width: 46px; height: 46px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; flex-shrink: 0;
+}
+.fb-stat .fb-icon.blue  { background: rgba(102,126,234,0.15); color: #667eea; }
+.fb-stat .fb-icon.gold  { background: rgba(243,156,18,0.15);  color: #f39c12; }
+.fb-stat .fb-icon.green { background: rgba(46,204,113,0.15);  color: #27ae60; }
+.fb-stat .fb-icon.red   { background: rgba(239,71,111,0.15);  color: #ef476f; }
+.fb-stat .fb-text strong { display: block; font-size: 1.6rem; font-weight: 700; color: #2c3e50; line-height: 1; }
+.fb-stat .fb-text span   { font-size: 0.78rem; color: #95a5a6; text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Rating filter bar (re-use filter-btn but gold active) */
+.filter-btn.f-rating.active { background: #f39c12; border-color: #f39c12; color: white; box-shadow: 0 3px 10px rgba(243,156,18,0.35); }
+
+/* Feedback card grid */
+.feedback-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.2rem;
+    margin-top: 0.5rem;
+}
+.feedback-card {
+    background: white;
+    border-radius: 16px;
+    padding: 1.4rem 1.5rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.07);
+    border-left: 4px solid var(--primary);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+}
+.feedback-card:hover { transform: translateY(-4px); box-shadow: 0 10px 28px rgba(0,0,0,0.11); }
+.feedback-card .fc-header {
+    display: flex; align-items: center; gap: 12px;
+}
+.fc-avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--secondary); color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.95rem; flex-shrink: 0;
+}
+.fc-meta strong { display: block; font-size: 0.95rem; color: #2c3e50; }
+.fc-meta span   { font-size: 0.78rem; color: #95a5a6; }
+.fc-stars { color: #f39c12; font-size: 0.95rem; letter-spacing: 2px; }
+.fc-stars.low { color: #e74c3c; }
+.fc-stars.mid { color: #f39c12; }
+.fc-stars.high { color: #27ae60; }
+.fc-comment {
+    font-size: 0.9rem; color: #555; line-height: 1.55;
+    border-top: 1px solid rgba(0,0,0,0.06);
+    padding-top: 10px; margin-top: 2px;
+    font-style: italic;
+}
+.fc-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.78rem; color: #aaa; margin-top: auto; padding-top: 8px;
+    border-top: 1px solid rgba(0,0,0,0.05);
+}
+.fc-branch {
+    background: rgba(0,119,182,0.1); color: var(--primary-dark);
+    padding: 3px 10px; border-radius: 50px; font-size: 0.76rem; font-weight: 600;
+}
+.fc-badge {
+    position: absolute; top: 14px; right: 14px;
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 700; color: white;
+}
+.fc-badge.r5,.fc-badge.r4 { background: #27ae60; }
+.fc-badge.r3               { background: #f39c12; }
+.fc-badge.r2,.fc-badge.r1  { background: #e74c3c; }
+
+@media (max-width: 768px) {
+    .feedback-grid { grid-template-columns: 1fr; }
+    .feedback-summary { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── Analytics Date Filter ────────────────────────────────────── */
+.analytics-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+    background: white;
+    border: 1px solid rgba(0,119,182,0.15);
+    border-radius: 50px;
+    padding: 10px 20px;
+    box-shadow: 0 2px 10px rgba(0,119,182,0.08);
+}
+.analytics-filter-bar .filter-label {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #555;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.analytics-filter-bar .filter-label i { color: var(--primary); }
+.af-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: #f4f8fc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%230077b6' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") no-repeat right 10px center;
+    border: 2px solid #ddd;
+    border-radius: 50px;
+    padding: 7px 32px 7px 14px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #2c3e50;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+}
+.af-select:hover, .af-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+}
+.af-apply-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 8px 22px;
+    border-radius: 50px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 3px 10px rgba(0,119,182,0.3);
+}
+.af-apply-btn:hover {
+    filter: brightness(1.12);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 15px rgba(0,119,182,0.4);
+}
+.af-reset-link {
+    font-size: 0.8rem;
+    color: #999;
+    text-decoration: none;
+    margin-left: 2px;
+    padding: 7px 12px;
+    border-radius: 50px;
+    transition: color 0.2s, background 0.2s;
+    white-space: nowrap;
+}
+.af-reset-link:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
+.af-period-badge {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--primary);
+    background: rgba(0,119,182,0.1);
+    padding: 5px 14px;
+    border-radius: 50px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+@media (max-width: 768px) {
+    .analytics-filter-bar { border-radius: 16px; }
+    .af-period-badge { margin-left: 0; }
+}
     </style>
 </head>
 <body>
@@ -449,6 +690,11 @@ if ($view === 'customers') {
                 </a>
             </li>
             <li>
+                <a href="dashboard.php?view=feedback" class="<?= $view === 'feedback' ? 'active' : '' ?>">
+                    <i class="fas fa-comment-dots"></i> Feedback
+                </a>
+            </li>
+            <li>
                 <a href="dashboard.php?view=customers" class="<?= $view === 'customers' ? 'active' : '' ?>">
                     <i class="fas fa-users"></i> Customers
                 </a>
@@ -465,11 +711,64 @@ if ($view === 'customers') {
         <?php if ($view === 'analytics'): ?>
             <!-- Analytics View -->
             <div class="glass-panel">
-                <h1><?= $pageTitle ?></h1>
-                <p style="color: #7f8c8d; margin-bottom: 2rem;">Booking and Performance Insights</p>
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:0.5rem;">
+                    <div>
+                        <h1 style="margin-bottom:0.3rem;"><?= $pageTitle ?></h1>
+                        <p style="color:#7f8c8d; margin:0;">Booking and Performance Insights</p>
+                    </div>
+                </div>
+
+                <!-- ── Date Filter ───────────────────────────────────────── -->
+                <?php
+                    $month_names = ['January','February','March','April','May','June',
+                                    'July','August','September','October','November','December'];
+                    $year_start  = 2020;
+                    $year_end    = $current_year;
+                    $selected_label = $month_names[$filter_month - 1] . ' ' . $filter_year;
+                ?>
+                <form method="GET" action="dashboard.php" style="margin-top:1.5rem; margin-bottom:0;">
+                    <input type="hidden" name="view" value="analytics">
+                    <div class="analytics-filter-bar">
+                        <span class="filter-label">
+                            <i class="fas fa-calendar-alt"></i> Filter Period:
+                        </span>
+
+                        <!-- Month Selector -->
+                        <select name="month" class="af-select" aria-label="Month">
+                            <?php for ($m = 1; $m <= 12; $m++): ?>
+                                <option value="<?= $m ?>" <?= $m === $filter_month ? 'selected' : '' ?>>
+                                    <?= $month_names[$m - 1] ?>
+                                </option>
+                            <?php endfor; ?>
+                        </select>
+
+                        <!-- Year Selector -->
+                        <select name="year" class="af-select" aria-label="Year">
+                            <?php for ($y = $year_end; $y >= $year_start; $y--): ?>
+                                <option value="<?= $y ?>" <?= $y === $filter_year ? 'selected' : '' ?>>
+                                    <?= $y ?>
+                                </option>
+                            <?php endfor; ?>
+                        </select>
+
+                        <button type="submit" class="af-apply-btn">
+                            <i class="fas fa-search"></i> Apply
+                        </button>
+
+                        <?php if (!$is_default_period): ?>
+                            <a href="dashboard.php?view=analytics" class="af-reset-link">
+                                <i class="fas fa-times-circle"></i> Reset
+                            </a>
+                        <?php endif; ?>
+
+                        <span class="af-period-badge">
+                            <i class="fas fa-clock" style="margin-right:5px;"></i><?= $selected_label ?>
+                        </span>
+                    </div>
+                </form>
                 
                 <!-- Statistics Cards -->
-                <div class="stats-grid">
+                <div class="stats-grid" style="margin-top:1.5rem;">
                     <div class="stat-card primary">
                         <h3>Pending Reservations</h3>
                         <div class="stat-value"><?= $stats['pending_reservations'] ?></div>
@@ -483,13 +782,13 @@ if ($view === 'customers') {
                     </div>
 
                     <div class="stat-card info">
-                        <h3>This Month</h3>
+                        <h3><?= $selected_label ?></h3>
                         <div class="stat-value"><?= $stats['this_month_bookings'] ?></div>
                         <div class="stat-label">Total bookings</div>
                     </div>
 
                     <div class="stat-card">
-                        <h3>Revenue (This Month)</h3>
+                        <h3>Revenue — <?= $selected_label ?></h3>
                         <div class="stat-value">₱<?= number_format($stats['this_month_revenue'], 0) ?></div>
                         <div class="stat-label">Confirmed revenue</div>
                     </div>
@@ -503,7 +802,7 @@ if ($view === 'customers') {
                     <div class="stat-card">
                         <h3>Avg Rating</h3>
                         <div class="stat-value"><?= number_format($stats['avg_rating'], 1) ?> ⭐</div>
-                        <div class="stat-label">This month</div>
+                        <div class="stat-label"><?= $selected_label ?></div>
                     </div>
                 </div>
             </div>
@@ -539,7 +838,7 @@ if ($view === 'customers') {
 
             <!-- Branch Performance -->
             <div class="glass-panel">
-                <h2 style="margin-bottom: 1rem;">Branch Performance</h2>
+                <h2 style="margin-bottom: 1rem;">Branch Performance <span style="font-size:0.75rem;font-weight:500;color:var(--primary);background:rgba(0,119,182,0.1);padding:4px 12px;border-radius:50px;margin-left:10px;vertical-align:middle;"><?= $selected_label ?></span></h2>
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
@@ -665,6 +964,131 @@ if ($view === 'customers') {
                 });
             </script>
 
+        <?php elseif ($view === 'feedback'): ?>
+            <!-- ══════════════════════ FEEDBACK VIEW ══════════════════════ -->
+            <div class="glass-panel">
+                <h1><i class="fas fa-comment-dots" style="color:var(--secondary);margin-right:10px;"></i><?= $pageTitle ?></h1>
+                <p style="color:#7f8c8d;margin-bottom:1.8rem;">Customer satisfaction & reviews across all branches</p>
+
+                <!-- Summary Cards -->
+                <div class="feedback-summary">
+                    <div class="fb-stat">
+                        <div class="fb-icon blue"><i class="fas fa-comments"></i></div>
+                        <div class="fb-text">
+                            <strong><?= $fb_stats['total'] ?></strong>
+                            <span>Total Reviews</span>
+                        </div>
+                    </div>
+                    <div class="fb-stat">
+                        <div class="fb-icon gold"><i class="fas fa-star"></i></div>
+                        <div class="fb-text">
+                            <strong><?= number_format($fb_stats['avg'], 1) ?></strong>
+                            <span>Avg Rating</span>
+                        </div>
+                    </div>
+                    <div class="fb-stat">
+                        <div class="fb-icon green"><i class="fas fa-thumbs-up"></i></div>
+                        <div class="fb-text">
+                            <strong><?= $fb_stats['5star'] ?></strong>
+                            <span>5-Star Reviews</span>
+                        </div>
+                    </div>
+                    <div class="fb-stat">
+                        <div class="fb-icon red"><i class="fas fa-thumbs-down"></i></div>
+                        <div class="fb-text">
+                            <strong><?= $fb_stats['1star'] ?></strong>
+                            <span>1-Star Reviews</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rating Filter Bar -->
+                <div class="filter-bar" style="margin-bottom:1.5rem;">
+                    <span><i class="fas fa-star"></i> Filter by Rating:</span>
+                    <?php
+                    $rating_opts = ['All' => 'All Stars', '5' => '⭐⭐⭐⭐⭐', '4' => '⭐⭐⭐⭐', '3' => '⭐⭐⭐', '2' => '⭐⭐', '1' => '⭐'];
+                    foreach ($rating_opts as $rv => $rl):
+                        $is_active = ($filter_rating === $rv);
+                        $rf_url    = 'dashboard.php?view=feedback' . ($rv !== 'All' ? '&rating=' . urlencode($rv) : '');
+                    ?>
+                        <a href="<?= $rf_url ?>" class="filter-btn f-rating <?= $is_active ? 'active' : '' ?>"><?= $rl ?></a>
+                    <?php endforeach; ?>
+                    <span style="font-size:0.82rem;color:#999;margin-left:4px;"><?= $fb_total ?> entr<?= $fb_total != 1 ? 'ies' : 'y' ?></span>
+                </div>
+            </div>
+
+            <!-- Feedback Cards Grid -->
+            <?php if (!empty($feedback_data)): ?>
+            <div class="feedback-grid">
+                <?php foreach ($feedback_data as $fb):
+                    $stars      = (int)$fb['rating'];
+                    $filled     = str_repeat('★', $stars);
+                    $empty      = str_repeat('☆', 5 - $stars);
+                    $star_class = $stars >= 4 ? 'high' : ($stars === 3 ? 'mid' : 'low');
+                    $badge_cls  = 'r' . $stars;
+                    $name       = htmlspecialchars($fb['full_name'] ?? 'Anonymous');
+                    $initial    = strtoupper(substr($name, 0, 1));
+                    $comment    = htmlspecialchars($fb['comment'] ?? '');
+                    $branch     = htmlspecialchars($fb['branch_name'] ?? 'N/A');
+                    $date       = $fb['feedback_date'] ? date('M d, Y', strtotime($fb['feedback_date'])) : '—';
+                    $card_color = $stars >= 4 ? 'var(--primary)' : ($stars === 3 ? '#f39c12' : '#ef476f');
+                ?>
+                <div class="feedback-card" style="border-left-color:<?= $card_color ?>;">
+                    <div class="fc-badge <?= $badge_cls ?>"><?= $stars ?></div>
+                    <div class="fc-header">
+                        <div class="fc-avatar"><?= $initial ?></div>
+                        <div class="fc-meta">
+                            <strong><?= $name ?></strong>
+                            <span>#<?= $fb['feedback_id'] ?> &nbsp;·&nbsp; <?= $date ?></span>
+                        </div>
+                    </div>
+                    <div class="fc-stars <?= $star_class ?>"><?= $filled ?><?= $empty ?></div>
+                    <?php if ($comment): ?>
+                    <div class="fc-comment">"<?= $comment ?>"</div>
+                    <?php else: ?>
+                    <div class="fc-comment" style="color:#bbb;font-style:normal;">No written comment.</div>
+                    <?php endif; ?>
+                    <div class="fc-footer">
+                        <span class="fc-branch"><i class="fas fa-map-marker-alt" style="margin-right:4px;"></i><?= $branch ?></span>
+                        <span><?= $date ?></span>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <?php else: ?>
+            <div class="glass-panel" style="text-align:center;padding:3rem;color:#888;">
+                <i class="fas fa-comment-slash" style="font-size:2.5rem;margin-bottom:1rem;color:#ddd;display:block;"></i>
+                No feedback entries found<?= $filter_rating !== 'All' ? ' for ' . $filter_rating . '-star rating.' : '.' ?>
+            </div>
+            <?php endif; ?>
+
+            <!-- Feedback Pagination -->
+            <?php if ($fb_pages > 1):
+                $fb_sp = ($filter_rating !== 'All') ? '&rating=' . urlencode($filter_rating) : '';
+            ?>
+            <div class="pagination" style="margin-top:1.5rem;">
+                <a href="dashboard.php?view=feedback&page=<?= $fb_page - 1 . $fb_sp ?>" class="page-btn <?= $fb_page <= 1 ? 'disabled' : '' ?>">
+                    <i class="fas fa-chevron-left"></i>
+                </a>
+                <?php
+                $win = 2; $s2 = max(1, $fb_page - $win); $e2 = min($fb_pages, $fb_page + $win);
+                if ($s2 > 1): ?><a href="dashboard.php?view=feedback&page=1<?= $fb_sp ?>" class="page-btn">1</a><?php
+                    if ($s2 > 2): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif;
+                endif;
+                for ($p = $s2; $p <= $e2; $p++): ?>
+                    <a href="dashboard.php?view=feedback&page=<?= $p . $fb_sp ?>" class="page-btn <?= $p === $fb_page ? 'active' : '' ?>"><?= $p ?></a>
+                <?php endfor;
+                if ($e2 < $fb_pages):
+                    if ($e2 < $fb_pages - 1): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif; ?>
+                    <a href="dashboard.php?view=feedback&page=<?= $fb_pages . $fb_sp ?>" class="page-btn"><?= $fb_pages ?></a>
+                <?php endif; ?>
+                <a href="dashboard.php?view=feedback&page=<?= $fb_page + 1 . $fb_sp ?>" class="page-btn <?= $fb_page >= $fb_pages ? 'disabled' : '' ?>">
+                    <i class="fas fa-chevron-right"></i>
+                </a>
+                <span class="page-info">Page <?= $fb_page ?> of <?= $fb_pages ?></span>
+            </div>
+            <?php endif; ?>
+
         <?php elseif ($view === 'customers'): ?>
             <!-- Customers View -->
             <div class="glass-panel">
@@ -718,10 +1142,15 @@ if ($view === 'customers') {
     ?>
     <div class="filter-bar">
         <span><i class="fas fa-filter"></i> Filter:</span>
-        <?php foreach ($statuses as $s):
+<?php foreach ($statuses as $s):
             $is_active = ($filter_status === $s);
             $url = 'dashboard.php' . ($s !== 'All' ? '?status=' . urlencode($s) : '');
-            $cnt = ($s !== 'All') ? $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = " . $pdo->quote($s))->fetchColumn() : null;
+            
+            // NEW: Apply the same exclusion rule to the filter counts
+            $cnt = null;
+            if ($s !== 'All') {
+                $cnt = $pdo->query("SELECT COUNT(*) FROM reservations r WHERE r.status = " . $pdo->quote($s) . " AND NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')")->fetchColumn();
+            }
         ?>
             <a href="<?= $url ?>" class="filter-btn <?= $filter_classes[$s] ?> <?= $is_active ? 'active' : '' ?>">
                 <?= $s ?><?php if($cnt !== null) echo " <span style='opacity:0.7;'>($cnt)</span>"; ?>

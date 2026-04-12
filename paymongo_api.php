@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'payment_method_types' => ['card', 'gcash', 'paymaya'],
                 // {CHECKOUT_SESSION_ID} is replaced by PayMongo with the actual session ID
                 'success_url' => 'http://localhost/agos/success_handler.php',
-                'cancel_url'  => 'http://localhost/agos/book.php'
+                'cancel_url'  => 'http://localhost/agos/book.php?cancelled=1'
             ]
         ]
     ];
@@ -48,22 +48,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     curl_close($ch);
 
     if (isset($json['data']['attributes']['checkout_url'])) {
-        // Save reservation as Pending and store its ID in session
-        $stmt = $pdo->prepare("
-            INSERT INTO reservations 
-                (customer_id, branch_id, reservation_date, reservation_type, total_amount, status) 
-            VALUES (?, ?, ?, ?, ?, 'Pending')
-        ");
-        $stmt->execute([
-            $_SESSION['customer_id'],
-            $branch_id,
-            $date,
-            $type,
-            $amount / 100
-        ]);
-        // Store reservation ID and PayMongo session ID so success_handler.php can confirm it
-        $_SESSION['pending_reservation_id'] = $pdo->lastInsertId();
-        $_SESSION['paymongo_session_id']    = $json['data']['id'];
+        // ── DO NOT insert into DB yet ─────────────────────────────────────────
+        // Storing a reservation here (before payment) would block the slot even
+        // if the user abandons the checkout. Instead, we keep the booking intent
+        // in the session only. success_handler.php will do the actual INSERT
+        // after verifying payment success directly with PayMongo's API.
+        // ─────────────────────────────────────────────────────────────────────
+        $_SESSION['booking_intent'] = [
+            'customer_id'      => $_SESSION['customer_id'],
+            'branch_id'        => $branch_id,
+            'reservation_date' => $date,
+            'reservation_type' => $type,
+            'total_amount'     => $amount / 100,
+        ];
+        $_SESSION['paymongo_session_id'] = $json['data']['id'];
 
         header("Location: " . $json['data']['attributes']['checkout_url']);
         exit();
