@@ -29,13 +29,13 @@ $pdo->query("
 $stats = [];
 
 // Overview stats
-$stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending'")->fetchColumn();
+// Only count Pending reservations that have been paid
+$stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending' AND payment_status = 'Paid'")->fetchColumn();
 $stats['todays_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
 $stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
 $stats['this_month_revenue'] = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = MONTH(CURDATE()) AND YEAR(reservation_date) = YEAR(CURDATE()) AND status IN ('Confirmed', 'Completed')")->fetchColumn();
 $stats['total_customers'] = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
 $stats['avg_rating'] = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = MONTH(CURDATE())")->fetchColumn();
-
 // Monthly booking trends (last 12 months)
 $monthly_query = "
     SELECT 
@@ -96,16 +96,22 @@ if ($view === 'customers') {
 } elseif ($view === 'analytics') {
     $pageTitle = "Booking Analytics";
 } else {
-    // Filter
+// Filter
     $allowed_statuses = ['All', 'Pending', 'Confirmed', 'Completed', 'Cancelled'];
     $filter_status = isset($_GET['status']) && in_array($_GET['status'], $allowed_statuses)
                      ? $_GET['status'] : 'All';
 
+    // NEW: Exclude unpaid checkout holds from the admin view globally
+    $exclude_holds = "NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')";
+    
+    $where_clause = "WHERE " . $exclude_holds;
+    if ($filter_status !== 'All') {
+        $where_clause .= " AND r.status = " . $pdo->quote($filter_status);
+    }
+
     // Pagination
     $per_page = 10;
     $current_page = max(1, (int)($_GET['page'] ?? 1));
-    $where_clause = $filter_status !== 'All'
-                    ? "WHERE r.status = " . $pdo->quote($filter_status) : "";
     $total_rows   = $pdo->query("SELECT COUNT(*) FROM reservations r $where_clause")->fetchColumn();
     $total_pages  = max(1, ceil($total_rows / $per_page));
     $current_page = min($current_page, $total_pages);
@@ -718,10 +724,15 @@ if ($view === 'customers') {
     ?>
     <div class="filter-bar">
         <span><i class="fas fa-filter"></i> Filter:</span>
-        <?php foreach ($statuses as $s):
+<?php foreach ($statuses as $s):
             $is_active = ($filter_status === $s);
             $url = 'dashboard.php' . ($s !== 'All' ? '?status=' . urlencode($s) : '');
-            $cnt = ($s !== 'All') ? $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = " . $pdo->quote($s))->fetchColumn() : null;
+            
+            // NEW: Apply the same exclusion rule to the filter counts
+            $cnt = null;
+            if ($s !== 'All') {
+                $cnt = $pdo->query("SELECT COUNT(*) FROM reservations r WHERE r.status = " . $pdo->quote($s) . " AND NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')")->fetchColumn();
+            }
         ?>
             <a href="<?= $url ?>" class="filter-btn <?= $filter_classes[$s] ?> <?= $is_active ? 'active' : '' ?>">
                 <?= $s ?><?php if($cnt !== null) echo " <span style='opacity:0.7;'>($cnt)</span>"; ?>

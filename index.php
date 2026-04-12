@@ -77,7 +77,11 @@ $feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f
 // Calendar Variables
 $selectedMonth = $_GET['month'] ?? date('m');
 $selectedYear = $_GET['year'] ?? date('Y');
-$selectedBranch = $_GET['branch'] ?? 'all';
+// Default to the first branch instead of 'all' — the "All Branches" option has been removed
+$firstBranch    = $branches[0]['branch_id'] ?? null;
+$selectedBranch = $_GET['branch'] ?? $firstBranch;
+// Reject 'all' in case it arrives via a stale URL
+if ($selectedBranch === 'all') $selectedBranch = $firstBranch;
 
 // Validate inputs
 $selectedMonth = max(1, min(12, intval($selectedMonth)));
@@ -87,40 +91,29 @@ $monthName = date('F Y', strtotime("$selectedYear-$selectedMonth-01"));
 $daysInMonth = date('t', strtotime("$selectedYear-$selectedMonth-01"));
 $firstDayOfWeek = date('N', strtotime("$selectedYear-$selectedMonth-01")); 
 
-// Build query based on branch selection
-if ($selectedBranch === 'all') {
-    // For "all branches", show if ANY branch is fully booked
-    $stmt = $pdo->prepare("
-        SELECT reservation_date, COUNT(DISTINCT branch_id) as booked_branches
-        FROM reservations 
-        WHERE MONTH(reservation_date) = ? 
-        AND YEAR(reservation_date) = ? 
-        AND status IN ('Confirmed', 'Pending')
-        GROUP BY reservation_date
-    ");
-    $stmt->execute([$selectedMonth, $selectedYear]);
-    $bookings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Create lookup array
-    $bookingsByDate = [];
-    foreach ($bookings as $b) {
-        $bookingsByDate[$b['reservation_date']] = $b['booked_branches'];
-    }
-    
-    $totalBranches = count($branches);
-} else {
-    // For specific branch, show if THAT branch is booked
-    $stmt = $pdo->prepare("
-        SELECT reservation_date, COUNT(*) as booking_count
-        FROM reservations 
-        WHERE branch_id = ?
-        AND MONTH(reservation_date) = ? 
-        AND YEAR(reservation_date) = ? 
-        AND status IN ('Confirmed', 'Pending')
-        GROUP BY reservation_date
-    ");
-    $stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
-    $bookings = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+// ─── Slot-aware availability query ───────────────────────────────────────────
+// Each date has two discrete booking slots: "Day" (day tour) and "Overnight".
+// A date is only fully booked when BOTH slots are taken for the selected branch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// For the selected branch: fetch which reservation_type slots are taken on each date.
+// GROUP BY (date, reservation_type) so one record = one booked slot, not one record per guest.
+$stmt = $pdo->prepare("
+    SELECT reservation_date, reservation_type
+    FROM   reservations
+    WHERE  branch_id = ?
+      AND  MONTH(reservation_date) = ?
+      AND  YEAR(reservation_date)  = ?
+      AND  status IN ('Confirmed', 'Pending')
+    GROUP BY reservation_date, reservation_type
+");
+$stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
+
+// $slotsByDate['2025-06-15']['Day']       = true  → Day slot is taken
+// $slotsByDate['2025-06-15']['Overnight'] = true  → Overnight slot is taken
+$slotsByDate = [];
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $slotsByDate[$row['reservation_date']][$row['reservation_type']] = true;
 }
 
 // Calculate previous and next month
@@ -570,6 +563,41 @@ if ($nextMonth > 12) {
     margin-top: 4px;
 }
 
+/* ── Slot pills: Day / Night badges inside each calendar cell ── */
+.slot-pills {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 5px;
+}
+
+.slot-pill {
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 10px;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+/* Available slot → green outline */
+.slot-open {
+    background: rgba(46, 125, 50, 0.10);
+    color: #2e7d32;
+    border: 1px solid #81c784;
+}
+
+/* Taken slot → muted red with strikethrough */
+.slot-taken {
+    background: rgba(198, 40, 40, 0.08);
+    color: #b71c1c;
+    border: 1px solid #ef9a9a;
+    text-decoration: line-through;
+    opacity: 0.75;
+}
+
 @media (max-width: 768px) {
     .calendar-controls {
         flex-direction: column;
@@ -776,7 +804,6 @@ if ($nextMonth > 12) {
                 <i class="fas fa-building"></i> Select Branch:
             </label>
             <select id="branchSelect" class="branch-select" onchange="changeBranch(this.value)">
-                <option value="all" <?= $selectedBranch === 'all' ? 'selected' : '' ?>>All Branches</option>
                 <?php foreach($branches as $b): ?>
                     <option value="<?= $b['branch_id'] ?>" <?= $selectedBranch == $b['branch_id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($b['branch_name']) ?>
@@ -798,7 +825,7 @@ if ($nextMonth > 12) {
             <div class="calendar-day-header">Sat</div>
             <div class="calendar-day-header">Sun</div>
 
-            <?php 
+            <?php
             // Empty cells before first day
             for ($x = 1; $x < $firstDayOfWeek; $x++) {
                 echo "<div></div>";
@@ -806,62 +833,51 @@ if ($nextMonth > 12) {
 
             // Days of the month
             for ($day = 1; $day <= $daysInMonth; $day++) {
-                $dateStr = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
-                $isPast = strtotime($dateStr) < strtotime(date('Y-m-d'));
+                $dateStr     = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
+                $isPast      = strtotime($dateStr) < strtotime(date('Y-m-d'));
                 $isClickable = false;
-                
+                $slotPillsHtml  = '';
+                $extraInfoHtml  = '';
+
                 if ($isPast) {
-                    // Past dates
-                    $class = "day-past";
+                    $class      = "day-past";
                     $statusText = "Past";
-                    $statusClass = "";
                 } else {
-                    if ($selectedBranch === 'all') {
-                        // All branches view
-                        $bookedCount = isset($bookingsByDate[$dateStr]) ? $bookingsByDate[$dateStr] : 0;
-                        
-                        if ($bookedCount >= $totalBranches) {
-                            $class = "day-booked";
+                        // Check each reservation_type slot independently.
+                        $dayBooked       = isset($slotsByDate[$dateStr]['Day']);
+                        $overnightBooked = isset($slotsByDate[$dateStr]['Overnight']);
+
+                        if ($dayBooked && $overnightBooked) {
+                            // Both slots occupied → truly fully booked
+                            $class      = "day-booked";
                             $statusText = "Fully Booked";
-                        } elseif ($bookedCount > 0) {
-                            $class = "day-limited";
-                            $statusText = "Limited";
-                            $availableCount = $totalBranches - $bookedCount;
+                        } elseif ($dayBooked || $overnightBooked) {
+                            // One slot still open → partial availability
+                            $class      = "day-limited";
+                            $statusText = "Partial";
                             $isClickable = true;
                         } else {
-                            $class = "day-available";
+                            // No slots taken → completely available
+                            $class      = "day-available";
                             $statusText = "Available";
                             $isClickable = true;
                         }
-                    } else {
-                        // Specific branch view
-                        $isBooked = isset($bookings[$dateStr]) && $bookings[$dateStr] > 0;
-                        
-                        if ($isBooked) {
-                            $class = "day-booked";
-                            $statusText = "Booked";
-                        } else {
-                            $class = "day-available";
-                            $statusText = "Available";
-                            $isClickable = true;
-                        }
-                    }
+
+                        // Slot pills: show Day and Overnight status as mini-badges
+                        $slotPillsHtml  = "<div class='slot-pills'>";
+                        $slotPillsHtml .= "<span class='slot-pill " . ($dayBooked       ? 'slot-taken' : 'slot-open') . "'>&#9728; Day</span>";
+                        $slotPillsHtml .= "<span class='slot-pill " . ($overnightBooked ? 'slot-taken' : 'slot-open') . "'>&#9790; Night</span>";
+                        $slotPillsHtml .= "</div>";
                 }
 
-                // Add clickable class and onclick event
                 $clickableClass = $isClickable ? 'clickable' : '';
-                $onclickAttr = $isClickable ? "onclick=\"bookDate('$dateStr', '$selectedBranch')\"" : '';
-                
-                echo "<div class='calendar-day $class $clickableClass' $onclickAttr data-date='$dateStr'>";
-                echo "<div class='day-number'>$day</div>";
-                echo "<div class='day-status'>$statusText</div>";
-                
-                // Show available count for limited availability
-                if (!$isPast && $selectedBranch === 'all' && isset($availableCount) && $class === 'day-limited') {
-                    echo "<div class='booking-count'>$availableCount available</div>";
-                    unset($availableCount); // Reset for next iteration
-                }
-                
+                $onclickAttr    = $isClickable ? "onclick=\"bookDate('{$dateStr}', '{$selectedBranch}')\"" : '';
+
+                echo "<div class='calendar-day {$class} {$clickableClass}' {$onclickAttr} data-date='{$dateStr}'>";
+                echo "<div class='day-number'>{$day}</div>";
+                echo "<div class='day-status'>{$statusText}</div>";
+                echo $slotPillsHtml;
+                echo $extraInfoHtml;
                 echo "</div>";
             }
             ?>
@@ -873,15 +889,13 @@ if ($nextMonth > 12) {
                 <div class="legend-box legend-available"></div>
                 <span>Available</span>
             </div>
-            <?php if ($selectedBranch === 'all'): ?>
             <div class="legend-item">
                 <div class="legend-box legend-limited"></div>
-                <span>Limited Availability</span>
+                <span>Partial (1 slot open)</span>
             </div>
-            <?php endif; ?>
             <div class="legend-item">
                 <div class="legend-box legend-booked"></div>
-                <span><?= $selectedBranch === 'all' ? 'Fully Booked' : 'Booked' ?></span>
+                <span>Fully Booked</span>
             </div>
             <div class="legend-item">
                 <div class="legend-box legend-past"></div>
@@ -889,12 +903,7 @@ if ($nextMonth > 12) {
             </div>
         </div>
         
-        <?php if ($selectedBranch === 'all'): ?>
-        <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
-            <i class="fas fa-info-circle"></i> Showing availability across all <?= count($branches) ?> branches. 
-            Select a specific branch to see detailed availability.
-        </p>
-        <?php else: 
+        <?php
             $branchName = '';
             foreach($branches as $b) {
                 if ($b['branch_id'] == $selectedBranch) {
@@ -904,9 +913,9 @@ if ($nextMonth > 12) {
             }
         ?>
         <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
-            <i class="fas fa-info-circle"></i> Showing availability for <strong><?= htmlspecialchars($branchName) ?></strong>
+            <i class="fas fa-info-circle"></i> Showing slot availability for <strong><?= htmlspecialchars($branchName) ?></strong>.
+            Each date has a <strong>Day Tour</strong> and an <strong>Overnight</strong> slot — booking one leaves the other open.
         </p>
-        <?php endif; ?>
     </div>
 </section>
 
@@ -989,7 +998,7 @@ function showLoginModal(date, branchId) {
         day: 'numeric' 
     });
     
-    const branchText = branchId === 'all' ? 'any available branch' : 'this branch';
+    const branchText = 'this branch';
     
     const modal = document.createElement('div');
     modal.id = 'loginModal';
