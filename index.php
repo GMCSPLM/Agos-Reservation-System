@@ -72,7 +72,7 @@ setTimeout(() => {
 
 $branches = $pdo->query("SELECT * FROM branches")->fetchAll();
 $amenities = $pdo->query("SELECT a.*, b.branch_name FROM amenities a JOIN branches b ON a.branch_id = b.branch_id")->fetchAll();
-$feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 6")->fetchAll();
+$feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 9")->fetchAll();
 
 // Calendar Variables
 $selectedMonth = $_GET['month'] ?? date('m');
@@ -635,6 +635,115 @@ if ($nextMonth > 12) {
         padding: 2px 6px;
     }
 }
+
+/* ── "What They Say" Redesigned Feedback Cards ─────────────────────────────── */
+.feedback-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+    margin-top: 16px;
+}
+
+.feedback-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 24px 22px 20px;
+    box-shadow: 0 4px 18px rgba(2, 62, 138, 0.08);
+    border-top: 4px solid #0077b6;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.feedback-card::before {
+    content: '\201C';
+    position: absolute;
+    top: -6px;
+    right: 16px;
+    font-size: 5.5rem;
+    line-height: 1;
+    color: #0077b6;
+    opacity: 0.08;
+    font-family: Georgia, serif;
+    pointer-events: none;
+}
+
+.feedback-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(2, 62, 138, 0.14);
+}
+
+.feedback-card-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.feedback-card-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #023e8a;
+    font-family: 'Poppins', sans-serif;
+    letter-spacing: 0.2px;
+}
+
+.feedback-card-stars {
+    display: flex;
+    gap: 3px;
+}
+
+.feedback-card-stars i {
+    font-size: 0.85rem;
+    color: #ffb703;
+}
+
+.feedback-card-comment {
+    font-size: 0.92rem;
+    color: #444;
+    line-height: 1.65;
+    font-style: italic;
+    flex-grow: 1;
+    border-left: 3px solid rgba(0, 119, 182, 0.2);
+    padding-left: 12px;
+    margin: 0;
+}
+
+.feedback-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(2, 62, 138, 0.08);
+    margin-top: auto;
+}
+
+.feedback-card-branch {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #0077b6;
+    background: rgba(0, 119, 182, 0.08);
+    padding: 3px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.1px;
+}
+
+.feedback-card-date {
+    font-size: 0.76rem;
+    color: #999;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .feedback-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+}
 </style>
 
 <header class="hero">
@@ -721,13 +830,13 @@ if ($nextMonth > 12) {
                 </div>
 
                 <div>
-                    <textarea name="comments" id="feedbackComments" class="custom-textarea" placeholder="Tell us your opinion" maxlength="500" required></textarea>
+                    <textarea name="comments" id="feedbackComments" class="custom-textarea" placeholder="Tell us your opinion" maxlength="50" required></textarea>
                     <div class="word-count-bar">
                         <span class="word-count-label">Chars:</span>
                         <div class="word-count-progress">
                             <div class="word-count-progress-fill" id="wcFill" style="width:0%"></div>
                         </div>
-                        <span class="word-count-num" id="wcNum">0 / 500</span>
+                        <span class="word-count-num" id="wcNum">0 / 50</span>
                     </div>
                     <span class="helper-text">How would you describe your stay with us?</span>
                 </div>
@@ -752,19 +861,30 @@ if ($nextMonth > 12) {
     <div class="feedback-grid">
         <?php foreach($feedbacks as $f): ?>
             <div class="feedback-card">
-                <div class="rating">
-                    <?php for($i=0; $i<$f['rating']; $i++) echo '<i class="fas fa-star"></i>'; ?>
-                </div>
-                <p>"<?= htmlspecialchars($f['comments']) ?>"</p>
-                <div style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
-                    <div style="width: 40px; height: 40px; background: #ddd; border-radius: 50%;"></div>
-                    <div>
-                        <strong style="display: block;"><?= htmlspecialchars($f['full_name']) ?></strong>
-                        <?php if (!empty($f['branch_name'])): ?>
-                            <small style="color: #023e8a; font-weight: 600;"><?= htmlspecialchars($f['branch_name']) ?></small><br>
-                        <?php endif; ?>
-                        <small style="color: #888;"><?= date('M d, Y', strtotime($f['feedback_date'])) ?></small>
+                <div class="feedback-card-header">
+                    <span class="feedback-card-name"><?= htmlspecialchars($f['full_name']) ?></span>
+                    <div class="feedback-card-stars">
+                        <?php for($i = 0; $i < intval($f['rating']); $i++): ?>
+                            <i class="fas fa-star"></i>
+                        <?php endfor; ?>
+                        <?php for($i = intval($f['rating']); $i < 5; $i++): ?>
+                            <i class="far fa-star" style="color:#ddd;"></i>
+                        <?php endfor; ?>
                     </div>
+                </div>
+                <p class="feedback-card-comment"><?= htmlspecialchars($f['comments']) ?></p>
+                <div class="feedback-card-footer">
+                    <?php if (!empty($f['branch_name'])): ?>
+                        <span class="feedback-card-branch">
+                            <i class="fas fa-map-marker-alt" style="font-size:0.7rem;"></i>
+                            <?= htmlspecialchars($f['branch_name']) ?>
+                        </span>
+                    <?php else: ?>
+                        <span></span>
+                    <?php endif; ?>
+                    <span class="feedback-card-date">
+                        <?= date('M d, Y', strtotime($f['feedback_date'])) ?>
+                    </span>
                 </div>
             </div>
         <?php endforeach; ?>
@@ -923,7 +1043,7 @@ if ($nextMonth > 12) {
 const wcTextarea = document.getElementById('feedbackComments');
 const wcNum      = document.getElementById('wcNum');
 const wcFill     = document.getElementById('wcFill');
-const WC_MAX     = 500;
+const WC_MAX     = 50;
 const WC_MIN     = 20;
 
 function updateCharCount() {

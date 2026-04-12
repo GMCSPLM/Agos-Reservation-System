@@ -3,8 +3,8 @@ include 'header.php';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 define('COMMENT_MIN_CHARS', 20);   // must type at least 20 characters
-define('COMMENT_MAX_CHARS', 500);  // hard cap at 500 characters
-define('OCCUPATION_MAX_CHARS', 80);
+define('COMMENT_MAX_CHARS', 50);  // hard cap at 500 characters
+define('OCCUPATION_MAX_CHARS', 20);
 define('NAME_MAX_CHARS', 60);
 
 // ─── Form Errors Array ────────────────────────────────────────────────────────
@@ -80,7 +80,8 @@ $feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name
                            FROM feedback f 
                            JOIN customers c ON f.customer_id = c.customer_id 
                            LEFT JOIN branches b ON f.branch_id = b.branch_id 
-                           ORDER BY feedback_date DESC")->fetchAll();
+                           ORDER BY feedback_date DESC
+                           LIMIT 9")->fetchAll();
 
 // Session-based username for autocomplete
 $loggedInName = $_SESSION['username'] ?? '';
@@ -372,6 +373,115 @@ $isLoggedIn   = isset($_SESSION['customer_id']);
     margin-left: auto;
     margin-right: auto;
 }
+
+/* ── "What They Say" Feedback Cards ──────────────────────────────────────── */
+.feedback-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+    margin-top: 16px;
+}
+
+.feedback-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 24px 22px 20px;
+    box-shadow: 0 4px 18px rgba(2, 62, 138, 0.08);
+    border-top: 4px solid #0077b6;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.feedback-card::before {
+    content: '\201C';
+    position: absolute;
+    top: -6px;
+    right: 16px;
+    font-size: 5.5rem;
+    line-height: 1;
+    color: #0077b6;
+    opacity: 0.08;
+    font-family: Georgia, serif;
+    pointer-events: none;
+}
+
+.feedback-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(2, 62, 138, 0.14);
+}
+
+.feedback-card-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.feedback-card-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #023e8a;
+    font-family: 'Poppins', sans-serif;
+    letter-spacing: 0.2px;
+}
+
+.feedback-card-stars {
+    display: flex;
+    gap: 3px;
+}
+
+.feedback-card-stars i {
+    font-size: 0.85rem;
+    color: #ffb703;
+}
+
+.feedback-card-comment {
+    font-size: 0.92rem;
+    color: #444;
+    line-height: 1.65;
+    font-style: italic;
+    flex-grow: 1;
+    border-left: 3px solid rgba(0, 119, 182, 0.2);
+    padding-left: 12px;
+    margin: 0;
+}
+
+.feedback-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(2, 62, 138, 0.08);
+    margin-top: auto;
+}
+
+.feedback-card-branch {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #0077b6;
+    background: rgba(0, 119, 182, 0.08);
+    padding: 3px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.1px;
+}
+
+.feedback-card-date {
+    font-size: 0.76rem;
+    color: #999;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .feedback-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+}
 </style>
 
 <!-- Toast Container -->
@@ -526,19 +636,30 @@ $isLoggedIn   = isset($_SESSION['customer_id']);
     <div class="feedback-grid">
         <?php foreach ($feedbacks as $f): ?>
             <div class="feedback-card">
-                <div class="rating">
-                    <?php for ($i = 0; $i < $f['rating']; $i++) echo '<i class="fas fa-star"></i>'; ?>
-                </div>
-                <p>"<?= htmlspecialchars($f['comments']) ?>"</p>
-                <div style="margin-top:15px; display:flex; align-items:center; gap:10px;">
-                    <div style="width:40px; height:40px; background:#ddd; border-radius:50%;"></div>
-                    <div>
-                        <strong style="display:block;"><?= htmlspecialchars($f['full_name']) ?></strong>
-                        <?php if (!empty($f['branch_name'])): ?>
-                            <small style="color:#023e8a; font-weight:600;"><?= htmlspecialchars($f['branch_name']) ?></small><br>
-                        <?php endif; ?>
-                        <small style="color:#888;"><?= date('M d, Y', strtotime($f['feedback_date'])) ?></small>
+                <div class="feedback-card-header">
+                    <span class="feedback-card-name"><?= htmlspecialchars($f['full_name']) ?></span>
+                    <div class="feedback-card-stars">
+                        <?php for ($i = 0; $i < intval($f['rating']); $i++): ?>
+                            <i class="fas fa-star"></i>
+                        <?php endfor; ?>
+                        <?php for ($i = intval($f['rating']); $i < 5; $i++): ?>
+                            <i class="far fa-star" style="color:#ddd;"></i>
+                        <?php endfor; ?>
                     </div>
+                </div>
+                <p class="feedback-card-comment"><?= htmlspecialchars($f['comments']) ?></p>
+                <div class="feedback-card-footer">
+                    <?php if (!empty($f['branch_name'])): ?>
+                        <span class="feedback-card-branch">
+                            <i class="fas fa-map-marker-alt" style="font-size:0.7rem;"></i>
+                            <?= htmlspecialchars($f['branch_name']) ?>
+                        </span>
+                    <?php else: ?>
+                        <span></span>
+                    <?php endif; ?>
+                    <span class="feedback-card-date">
+                        <?= date('M d, Y', strtotime($f['feedback_date'])) ?>
+                    </span>
                 </div>
             </div>
         <?php endforeach; ?>
