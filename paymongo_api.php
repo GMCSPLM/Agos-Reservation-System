@@ -1,6 +1,6 @@
 <?php
-require_once 'db.php';
-require_once 'config.php';
+require_once(__DIR__ . '/db.php');
+require_once(__DIR__ . '/config.php');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $branch_id = $_POST['branch_id'];
@@ -27,8 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]],
                 'payment_method_types' => ['card', 'gcash', 'paymaya'],
                 // {CHECKOUT_SESSION_ID} is replaced by PayMongo with the actual session ID
-                'success_url' => 'http://localhost/agos/success_handler.php',
-                'cancel_url'  => 'http://localhost/agos/book.php?cancelled=1'
+                'success_url' => 'https://agos.up.railway.app/success_handler.php',
+                'cancel_url'  => 'https://agos.up.railway.app/book.php?cancelled=1'
             ]
         ]
     ];
