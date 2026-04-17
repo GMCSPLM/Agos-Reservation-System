@@ -1,3 +1,3 @@
 <?php
-define('PAYMONGO_SECRET_KEY', getenv('sk_test_gmW1yUU2gXPpHL6X1BqHdXU5')); 
+define('PAYMONGO_SECRET_KEY', $_ENV['PAYMONGO_SECRET_KEY'] ??getenv('PAYMONGO_SECRET_KEY')); 
 ?>
