@@ -628,6 +628,27 @@ $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
     .tour-type-grid   { grid-template-columns: 1fr; }
     .book-step-label  { display: none; }
 }
+/* ── Extra small (≤375px) — added for 320px–375px screens ── */
+@media (max-width: 375px) {
+    .book-hero-panel     { padding: 28px 16px 24px; }
+    .book-hero-title     { font-size: 1.55rem; }
+    .book-hero-subtitle  { font-size: 0.82rem; margin-bottom: 24px; }
+    .book-hero-badge     { font-size: 0.67rem; padding: 5px 14px; }
+    .book-form-panel     { padding: 20px 14px 40px; }
+    .book-form-card      { padding: 22px 14px; border-radius: 16px; max-width: 100%; }
+    .book-form-heading   { font-size: 1.35rem; }
+    .book-steps          { margin-bottom: 20px; }
+    .book-step-num       { width: 26px; height: 26px; font-size: 0.7rem; }
+    .bk-input            { padding: 11px 13px; font-size: 0.88rem; }
+    .tour-type-grid      { grid-template-columns: 1fr; gap: 10px; }
+    .tour-type-lbl       { padding: 16px 10px 13px; }
+    .tt-price            { font-size: 1rem; }
+    .book-price-summary  { padding: 13px 14px; }
+    .book-price-amount   { font-size: 1.35rem; }
+    .book-submit-btn     { padding: 13px 18px; font-size: 0.88rem; }
+    .book-feature-item   { min-width: 120px; font-size: 0.8rem; }
+    .book-feature-icon   { width: 32px; height: 32px; font-size: 0.78rem; }
+}
 </style>
 
 <div class="book-page-wrapper">

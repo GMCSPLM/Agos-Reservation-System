@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
+        /* ── ORIGINAL — untouched ── */
         .btn-nav-reservations {
             border: 2px solid #0077b6 !important;
             color: #0077b6 !important;
@@ -32,8 +33,8 @@
             justify-content: center;
             align-items: center;
             gap: 5px;
-            width: 40px;
-            height: 40px;
+            width: 38px;
+            height: 38px;
             background: none;
             border: none;
             cursor: pointer;
@@ -41,15 +42,16 @@
             border-radius: 8px;
             transition: background 0.2s;
             z-index: 1100;
+            flex-shrink: 0;
         }
         .hamburger:hover {
             background: rgba(0, 119, 182, 0.08);
             box-shadow: none;
             transform: none;
         }
-        .hamburger span{
+        .hamburger span {
             display: block;
-            width: 22px;
+            width: 20px;
             height: 2px;
             background: var(--primary-dark);
             border-radius: 2px;
@@ -57,41 +59,44 @@
         }
         /* Animate to X when open */
         .hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
-        .hamburger.open span:nth-child(2) { opacity: 0;  transform: scaleX(0); }
+        .hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
         .hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
 
-        /* Added: MOBILE nav styles */
+        /* ── ADDED: Mobile nav styles ── */
         @media (max-width: 768px) {
             .hamburger { display: flex; }
+
+            /* Prevent logo from overflowing on very small screens */
+            .logo { font-size: 1.25rem; }
+            .logo span { font-size: 0.85rem; }
 
             nav ul {
                 display: none;
                 flex-direction: column;
                 position: fixed;
-                top: 0;
-                right: 0;
+                top: 0; right: 0;
                 width: 75%;
+                max-width: 280px;
                 height: 100vh;
                 background: rgba(255, 255, 255, 0.98);
                 backdrop-filter: blur(20px);
                 -webkit-backdrop-filter: blur(20px);
-                padding:80px 24px 40px;
+                padding: 75px 22px 40px;
                 gap: 4px;
                 box-shadow: -6px 0 30px rgba(0, 0, 0, 0.12);
                 z-index: 1050;
                 overflow-y: auto;
             }
-            nav ul.open {
-                display: flex;
-            }
-             nav ul li a {
+            nav ul.open { display: flex; }
+
+            nav ul li a {
                 display: block;
                 padding: 12px 16px;
                 border-radius: 10px;
                 font-size: 0.92rem;
                 font-weight: 600;
             }
-             nav ul li a:hover {
+            nav ul li a:hover {
                 background: rgba(0, 119, 182, 0.08);
                 transform: none;
             }
@@ -106,33 +111,43 @@
                 margin-top: 4px;
             }
 
-            /*Overlay behind menu */
+            /* Overlay behind the menu */
             .nav-overlay {
                 display: none;
                 position: fixed;
-                isnet: 0;
+                inset: 0;
                 background: rgba(0, 0, 0, 0.3);
                 z-index: 1040;
             }
-            .nav-overlay.open {
-                display: block;
-            }
+            .nav-overlay.open { display: block; }
+        }
+
+        /* Extra small screens (320px) */
+        @media (max-width: 360px) {
+            .logo { font-size: 1.1rem; }
+            .logo span { font-size: 0.78rem; }
+            nav { padding: 0.9rem 4%; }
         }
     </style>
 </head>
 <body>
-    <! -- Added: Overlay (close menu when tapped outside) -->
-    <div class="nav-overlay" id="navOverlay"></div>
+
+<!-- ADDED: Overlay (closes menu when tapped outside) -->
+<div class="nav-overlay" id="navOverlay"></div>
+
 <nav>
     <div class="logo">
         <i class="fas fa-water"></i> CheckMates <span>AGOS</span>
     </div>
-        <!-- Added: Hamburger button -->
-        <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
+
+    <!-- ADDED: Hamburger button -->
+    <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
         <span></span>
         <span></span>
         <span></span>
     </button>
+
+    <!-- ORIGINAL ul — only added id="navMenu" for JS targeting -->
     <ul id="navMenu">
         <li><a href="index.php">HOME</a></li>
         <li><a href="branches.php">BRANCHES</a></li>
@@ -161,7 +176,7 @@
     const hamburgerBtn = document.getElementById('hamburgerBtn');
     const navMenu      = document.getElementById('navMenu');
     const navOverlay   = document.getElementById('navOverlay');
- 
+
     function openMenu() {
         hamburgerBtn.classList.add('open');
         navMenu.classList.add('open');
@@ -174,7 +189,7 @@
         navOverlay.classList.remove('open');
         document.body.style.overflow = '';
     }
- 
+
     hamburgerBtn.addEventListener('click', () => {
         navMenu.classList.contains('open') ? closeMenu() : openMenu();
     });
