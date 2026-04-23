@@ -252,13 +252,18 @@ tr:hover td { background: #f8fbfd; }
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 /* ════════════════════════════════════════════════════════════════
-   ADDED: Responsive fixes — all original styles above untouched
+   ADDED: Responsive — original styles above untouched
    ════════════════════════════════════════════════════════════════ */
 
-/* Prevent horizontal overflow/scroll on ALL pages */
-html, body {
-    overflow-x: hidden;
-    max-width: 100%;
+/* Fix horizontal overflow. NOTE: only on body, NOT html —
+   setting overflow-x:hidden on html breaks position:fixed elements */
+body { overflow-x: hidden; }
+
+/* Fix iOS background-attachment:fixed bug (causes blank areas on scroll) */
+@media (max-width: 768px) {
+    body {
+        background-attachment: scroll;
+    }
 }
 
 /* ── Tablet (≤1024px) ── */
@@ -286,12 +291,10 @@ html, body {
 
     .auth-box      { margin: 2rem 16px; padding: 2rem 1.5rem; }
 
-    /* Make tables horizontally scrollable instead of breaking layout */
-    .table-wrap    { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    table          { min-width: 500px; font-size: 0.82rem; }
+    table          { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; font-size: 0.82rem; }
     th, td         { padding: 12px 14px; }
 
-    .feedback-card { min-width: 280px; padding: 20px; }
+    .feedback-card { min-width: unset; padding: 20px; }
 }
 
 /* ── Small Mobile (≤480px) ── */

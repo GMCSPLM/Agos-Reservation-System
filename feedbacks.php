@@ -482,6 +482,32 @@ $isLoggedIn   = isset($_SESSION['customer_id']);
         gap: 16px;
     }
 }
+
+/* ── ADDED: Form responsive ── */
+@media (max-width: 768px) {
+    .feedback-section-wrapper {
+        padding: 40px 0;
+        background-attachment: scroll;
+    }
+    .feedback-header {
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .header-split {
+        width: 100%;
+    }
+    .header-split h3 {
+        font-size: 1.3rem;
+        white-space: normal;
+    }
+    .custom-form-grid {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+    .star-rating label  { font-size: 2.2rem; }
+    .custom-textarea    { min-height: 130px; }
+}
 </style>
 
 <!-- Toast Container -->

@@ -744,6 +744,49 @@ if ($nextMonth > 12) {
         gap: 16px;
     }
 }
+
+/* ── ADDED: Feedback form responsive ── */
+@media (max-width: 768px) {
+    .feedback-section-wrapper {
+        padding: 40px 0;
+        background-attachment: scroll;
+    }
+    .feedback-header {
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .header-split {
+        width: 100%;
+    }
+    .header-split h3 {
+        font-size: 1.3rem;
+        white-space: normal;
+    }
+    .custom-form-grid {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+    .star-rating label { font-size: 2.2rem; }
+}
+
+/* ── ADDED: Calendar responsive for 320px–480px ── */
+@media (max-width: 480px) {
+    .calendar-container    { padding: 1rem 0.75rem; }
+    .calendar-grid         { gap: 3px; }
+    .calendar-day          { min-height: 62px; padding: 6px 3px; }
+    .calendar-day-header   { font-size: 0.62rem; padding: 8px 2px; }
+    .day-number            { font-size: 0.9rem; margin-bottom: 3px; }
+    .day-status            { font-size: 0.52rem; padding: 2px 3px; }
+    .slot-pills            { gap: 2px; margin-top: 2px; }
+    .slot-pill             { font-size: 0.48rem; padding: 1px 3px; }
+    .current-month         { font-size: 1rem; min-width: auto; }
+    .nav-btn               { padding: 8px 12px; font-size: 0.82rem; gap: 5px; }
+    .calendar-controls     { padding: 16px; }
+    .calendar-legend       { gap: 14px; padding: 14px; }
+    .legend-item           { font-size: 0.78rem; }
+    .legend-box            { width: 15px; height: 15px; }
+}
 </style>
 
 <header class="hero">
