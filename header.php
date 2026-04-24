@@ -138,6 +138,15 @@
             .logo span { font-size: 0.78rem; }
             nav        { padding: 0.9rem 4%; }
         }
+
+        /* ── ADDED: 320px absolute minimum ── */
+        @media (max-width: 330px) {
+            .logo      { font-size: 1rem; }
+            .logo span { display: none; } /* hide tagline to prevent overflow */
+            nav        { padding: 0.8rem 3%; }
+            .hamburger { width: 34px; height: 34px; }
+            nav ul     { width: 85%; }
+        }
     </style>
 </head>
 <body>

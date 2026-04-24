@@ -787,6 +787,41 @@ if ($nextMonth > 12) {
     .legend-item           { font-size: 0.78rem; }
     .legend-box            { width: 15px; height: 15px; }
 }
+
+/* ── ADDED: 320px–375px screens (ultra-small) ── */
+@media (max-width: 375px) {
+    /* Feedback form header */
+    .feedback-section-wrapper  { padding: 28px 0; background-attachment: scroll; }
+    .header-split h3           { font-size: 1rem; margin: 0 8px; }
+
+    /* Stars + submit */
+    .star-rating               { gap: 4px; margin-bottom: 14px; }
+    .star-rating label         { font-size: 1.65rem; }
+    .btn-submit-custom         { font-size: 0.95rem; padding: 9px 16px; }
+
+    /* Textarea */
+    .custom-textarea           { min-height: 100px; font-size: 0.88rem; }
+    .custom-input              { padding: 11px; font-size: 0.88rem; }
+
+    /* Calendar */
+    .calendar-controls         { padding: 12px; gap: 14px; }
+    .calendar-nav              { gap: 8px; }
+    .nav-btn                   { padding: 6px 8px; font-size: 0.7rem; gap: 4px; }
+    .current-month             { font-size: 0.85rem; min-width: auto; }
+    .branch-selector label     { font-size: 0.82rem; }
+    .branch-select             { font-size: 0.82rem; padding: 8px 10px; min-width: unset; }
+    .calendar-container        { padding: 0.6rem 0.4rem; border-radius: 14px; }
+    .calendar-grid             { gap: 2px; }
+    .calendar-day              { min-height: 52px; padding: 4px 1px; border-radius: 6px; }
+    .calendar-day-header       { font-size: 0.54rem; padding: 5px 1px; border-radius: 5px; }
+    .day-number                { font-size: 0.75rem; margin-bottom: 2px; }
+    .day-status                { font-size: 0.42rem; padding: 1px 2px; border-radius: 3px; }
+    .slot-pills                { display: none; }   /* too small to render usefully */
+    .calendar-legend           { gap: 10px; padding: 10px; }
+    .legend-item               { font-size: 0.7rem; gap: 5px; }
+    .legend-box                { width: 13px; height: 13px; }
+    .calendar-day.clickable::after { display: none; } /* tooltip doesn't fit */
+}
 </style>
 
 <header class="hero">

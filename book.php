@@ -649,6 +649,20 @@ $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
     .book-feature-item   { min-width: 120px; font-size: 0.8rem; }
     .book-feature-icon   { width: 32px; height: 32px; font-size: 0.78rem; }
 }
+
+/* ── ADDED: 320px absolute minimum ── */
+@media (max-width: 330px) {
+    .book-hero-title     { font-size: 1.35rem; }
+    .book-form-card      { padding: 18px 12px; }
+    .book-form-heading   { font-size: 1.2rem; }
+    .bk-input            { padding: 10px 11px; font-size: 0.84rem; }
+    .tour-type-grid      { grid-template-columns: 1fr; }
+    .tt-price            { font-size: 0.95rem; }
+    .book-price-amount   { font-size: 1.2rem; }
+    .book-submit-btn     { padding: 11px 14px; font-size: 0.84rem; }
+    .book-step-label     { display: none; }
+    .book-hero-badge     { display: none; }
+}
 </style>
 
 <div class="book-page-wrapper">

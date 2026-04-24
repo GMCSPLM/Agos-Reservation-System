@@ -508,6 +508,25 @@ $isLoggedIn   = isset($_SESSION['customer_id']);
     .star-rating label  { font-size: 2.2rem; }
     .custom-textarea    { min-height: 130px; }
 }
+
+/* ── ADDED: 320px–375px screens ── */
+@media (max-width: 375px) {
+    .feedback-section-wrapper  { padding: 26px 0; }
+    .header-split h3           { font-size: 1rem; margin: 0 8px; }
+    .custom-input              { padding: 11px; font-size: 0.88rem; }
+    .custom-textarea           { min-height: 100px; font-size: 0.88rem; padding: 11px; }
+    .star-rating               { gap: 4px; margin-bottom: 14px; }
+    .star-rating label         { font-size: 1.65rem; }
+    .btn-submit-custom         { font-size: 0.95rem; padding: 9px 16px; }
+    .word-count-bar            { padding: 3px 8px; }
+    .word-count-label          { font-size: 0.68rem; }
+    .word-count-num            { font-size: 0.72rem; }
+    .helper-text               { font-size: 0.78rem; }
+    .field-error               { font-size: 0.75rem; }
+    .feedback-card             { padding: 18px 14px 14px; }
+    .feedback-card-name        { font-size: 0.92rem; }
+    .feedback-card-comment     { font-size: 0.82rem; }
+}
 </style>
 
 <!-- Toast Container -->

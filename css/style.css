@@ -306,3 +306,27 @@ body { overflow-x: hidden; }
     .auth-box      { margin: 1.5rem 12px; padding: 1.8rem 1.2rem; }
     .btn-hero      { padding: 0.75rem 1.6rem; font-size: 0.9rem; }
 }
+
+/* ── Very Small Mobile (≤375px) — covers 320px devices ── */
+@media (max-width: 375px) {
+    .hero          { height: 62vh; padding: 0 12px; }
+    .hero h1       { font-size: 1.5rem; }
+    .hero p        { font-size: 0.82rem; margin-bottom: 1.4rem; }
+    .btn-hero      { padding: 0.65rem 1.2rem; font-size: 0.82rem; }
+
+    .section-title { font-size: 1.2rem; padding: 6px 14px; margin: 2rem 0 1.2rem 0; }
+
+    .container     { padding: 0 10px 24px 10px; }
+    .grid          { gap: 1.2rem; }
+    .card img      { height: 170px; }
+    .card-content  { padding: 1.2rem; }
+    .card h3       { font-size: 1.15rem; }
+
+    .auth-box      { margin: 1rem 8px; padding: 1.5rem 1rem; }
+    input, select, textarea { padding: 0.8rem; font-size: 0.88rem; }
+    button         { padding: 0.85rem; font-size: 0.92rem; }
+
+    .feedback-card { padding: 18px 16px 14px; }
+    .feedback-card-name { font-size: 0.95rem; }
+    .feedback-card-comment { font-size: 0.85rem; }
+}
