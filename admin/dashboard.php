@@ -5,30 +5,190 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'Admin') {
     die("Access Denied");
 }
 
+// =========================================================================
+// Resolve current admin (works whether login stored user_id, username, or both)
+// =========================================================================
+$current_user_id = $_SESSION['user_id'] ?? null;
+if (!$current_user_id && isset($_SESSION['username'])) {
+    $stmt = $pdo->prepare("SELECT user_id FROM users WHERE username = ? AND role = 'Admin' LIMIT 1");
+    $stmt->execute([$_SESSION['username']]);
+    $current_user_id = $stmt->fetchColumn() ?: null;
+    if ($current_user_id) {
+        $_SESSION['user_id'] = (int)$current_user_id;
+    }
+}
+if (!$current_user_id) {
+    die("Session expired. Please log in again.");
+}
+
+// Load this admin's profile (creates one on the fly for legacy admins
+// who existed before the migration was run).
+$stmt = $pdo->prepare("
+    SELECT ap.admin_id, ap.user_id, ap.full_name, ap.is_super_admin,
+           ap.must_change_password, u.username
+    FROM users u
+    LEFT JOIN admin_profiles ap ON ap.user_id = u.user_id
+    WHERE u.user_id = ? AND u.role = 'Admin' LIMIT 1
+");
+$stmt->execute([$current_user_id]);
+$current_admin = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if ($current_admin && $current_admin['admin_id'] === null) {
+    // Legacy admin row without profile — auto-promote to super admin
+    // if they're admin@gmail.com, otherwise create a regular profile.
+    $is_super = ($current_admin['username'] === 'admin@gmail.com') ? 1 : 0;
+    $pdo->prepare("
+        INSERT INTO admin_profiles (user_id, full_name, is_super_admin, must_change_password)
+        VALUES (?, ?, ?, 0)
+    ")->execute([$current_user_id, 'Administrator', $is_super]);
+    $stmt->execute([$current_user_id]);
+    $current_admin = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+$is_super_admin = !empty($current_admin['is_super_admin']);
+
+// =========================================================================
+// Action handlers
+// =========================================================================
+$action_msg = '';   // success / info banner
+$action_err = '';   // error banner
+
+// --- Reservation approve / reject (existing) -----------------------------
 if (isset($_GET['approve'])) {
-    $pdo->prepare("UPDATE reservations SET status='Confirmed' WHERE reservation_id=?")->execute([$_GET['approve']]);
+    $pdo->prepare("UPDATE reservations SET status='Confirmed' WHERE reservation_id=?")
+        ->execute([$_GET['approve']]);
     header("Location: dashboard.php");
     exit;
 }
-
 if (isset($_GET['reject'])) {
-    $pdo->prepare("UPDATE reservations SET status='Cancelled' WHERE reservation_id=?")->execute([$_GET['reject']]);
+    $pdo->prepare("UPDATE reservations SET status='Cancelled' WHERE reservation_id=?")
+        ->execute([$_GET['reject']]);
     header("Location: dashboard.php");
     exit;
 }
 
+$is_post = (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST');
+
+// --- Add a new admin (any admin can add) ---------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'add_admin') {
+    $new_email = trim($_POST['email'] ?? '');
+    $new_name  = trim($_POST['full_name'] ?? '');
+    $default_password = 'ChangeMe@123';
+
+    if ($new_email === '' || $new_name === '') {
+        $action_err = "Full name and email are required.";
+    } elseif (!filter_var($new_email, FILTER_VALIDATE_EMAIL)) {
+        $action_err = "Please provide a valid email address.";
+    } else {
+        // Reject if username already exists in users table
+        $check = $pdo->prepare("SELECT user_id FROM users WHERE username = ? LIMIT 1");
+        $check->execute([$new_email]);
+        if ($check->fetchColumn()) {
+            $action_err = "An account with that email already exists.";
+        } else {
+            try {
+                $pdo->beginTransaction();
+                $hash = password_hash($default_password, PASSWORD_DEFAULT);
+
+                $pdo->prepare("
+                    INSERT INTO users (username, password_hash, role, is_active, customer_id)
+                    VALUES (?, ?, 'Admin', 1, NULL)
+                ")->execute([$new_email, $hash]);
+                $new_uid = (int)$pdo->lastInsertId();
+
+                $pdo->prepare("
+                    INSERT INTO admin_profiles
+                        (user_id, full_name, is_super_admin, created_by_admin_id, must_change_password)
+                    VALUES (?, ?, 0, ?, 1)
+                ")->execute([$new_uid, $new_name, $current_admin['admin_id']]);
+
+                $pdo->commit();
+                $action_msg = "Admin '{$new_name}' added. "
+                            . "Default password: <strong>{$default_password}</strong> "
+                            . "— share securely; the new admin will be prompted to change it.";
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $action_err = "Could not add admin: " . htmlspecialchars($e->getMessage());
+            }
+        }
+    }
+}
+
+// --- Delete an admin (super admin only, cannot delete self or other supers)
+if ($is_post && ($_POST['action'] ?? '') === 'delete_admin') {
+    $target_id = (int)($_POST['admin_id'] ?? 0);
+
+    if (!$is_super_admin) {
+        $action_err = "Only the main administrator can delete admin accounts.";
+    } elseif ($target_id === (int)$current_admin['admin_id']) {
+        $action_err = "You cannot delete your own account.";
+    } else {
+        $stmt = $pdo->prepare("SELECT user_id, full_name, is_super_admin FROM admin_profiles WHERE admin_id = ?");
+        $stmt->execute([$target_id]);
+        $target = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$target) {
+            $action_err = "Admin not found.";
+        } elseif ((int)$target['is_super_admin'] === 1) {
+            $action_err = "The main administrator cannot be deleted.";
+        } else {
+            // Cascade through users → admin_profiles via FK ON DELETE CASCADE.
+            $pdo->prepare("DELETE FROM users WHERE user_id = ?")
+                ->execute([$target['user_id']]);
+            $action_msg = "Admin '" . htmlspecialchars($target['full_name']) . "' has been removed.";
+        }
+    }
+}
+
+// --- Change own password (any admin) -------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'change_password') {
+    $current_pw = $_POST['current_password'] ?? '';
+    $new_pw     = $_POST['new_password'] ?? '';
+    $confirm_pw = $_POST['confirm_password'] ?? '';
+
+    if ($current_pw === '' || $new_pw === '' || $confirm_pw === '') {
+        $action_err = "All password fields are required.";
+    } elseif (strlen($new_pw) < 8) {
+        $action_err = "New password must be at least 8 characters.";
+    } elseif ($new_pw !== $confirm_pw) {
+        $action_err = "New password and confirmation do not match.";
+    } else {
+        $stmt = $pdo->prepare("SELECT password_hash FROM users WHERE user_id = ?");
+        $stmt->execute([$current_user_id]);
+        $stored = $stmt->fetchColumn();
+
+        if (!$stored || !password_verify($current_pw, $stored)) {
+            $action_err = "Current password is incorrect.";
+        } else {
+            $new_hash = password_hash($new_pw, PASSWORD_DEFAULT);
+            $pdo->prepare("UPDATE users SET password_hash = ? WHERE user_id = ?")
+                ->execute([$new_hash, $current_user_id]);
+            $pdo->prepare("
+                UPDATE admin_profiles
+                SET must_change_password = 0, last_password_change = NOW()
+                WHERE admin_id = ?
+            ")->execute([$current_admin['admin_id']]);
+            $action_msg = "Password updated successfully.";
+        }
+    }
+}
+
+// =========================================================================
+// View routing & data
+// =========================================================================
 $view = $_GET['view'] ?? 'dashboard';
+
 // Auto-complete confirmed reservations whose date has passed
 $pdo->query("
-    UPDATE reservations 
-    SET status = 'Completed' 
-    WHERE status = 'Confirmed' 
-    AND reservation_date < CURDATE()
+    UPDATE reservations
+    SET status = 'Completed'
+    WHERE status = 'Confirmed'
+      AND reservation_date < CURDATE()
 ");
-// Fetch analytics data
+
 $stats = [];
 
-// ── Analytics date filter ─────────────────────────────────────────────────
+// ── Analytics date filter ────────────────────────────────────────────────
 $current_year  = (int)date('Y');
 $current_month = (int)date('m');
 $filter_month  = (isset($_GET['month']) && (int)$_GET['month'] >= 1 && (int)$_GET['month'] <= 12)
@@ -37,48 +197,64 @@ $filter_year   = (isset($_GET['year'])  && (int)$_GET['year']  >= 2020 && (int)$
                  ? (int)$_GET['year']  : $current_year;
 $is_default_period = ($filter_month === $current_month && $filter_year === $current_year);
 
-// Overview stats
-// Only count Pending reservations that have been paid
+// Year used by the Monthly Booking Trends chart (independent of the page filter)
+$trend_year = (isset($_GET['trend_year']) && (int)$_GET['trend_year'] >= 2020 && (int)$_GET['trend_year'] <= $current_year + 1)
+              ? (int)$_GET['trend_year'] : $current_year;
+
+// Overview stats (existing — unchanged)
 $stats['pending_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Pending' AND payment_status = 'Paid'")->fetchColumn();
-$stats['todays_reservations'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
-$stats['this_month_bookings'] = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = $filter_month AND YEAR(reservation_date) = $filter_year AND status IN ('Confirmed', 'Completed')")->fetchColumn();
-$stats['this_month_revenue'] = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = $filter_month AND YEAR(reservation_date) = $filter_year AND status IN ('Confirmed', 'Completed')")->fetchColumn();
-$stats['total_customers'] = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
-$stats['avg_rating'] = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = $filter_month AND YEAR(feedback_date) = $filter_year")->fetchColumn();
-// Monthly booking trends (last 12 months)
-$monthly_query = "
-    SELECT 
-        DATE_FORMAT(reservation_date, '%Y-%m') as month,
-        DATE_FORMAT(reservation_date, '%b %Y') as month_label,
-        SUM(CASE WHEN status IN ('Pending', 'Confirmed', 'Completed') THEN 1 ELSE 0 END) as total_bookings,
-        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN 1 ELSE 0 END) as successful_bookings,
-        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN total_amount ELSE 0 END) as revenue,
-        SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_bookings
+$stats['todays_reservations']  = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'Confirmed' AND reservation_date = CURDATE()")->fetchColumn();
+$stats['this_month_bookings']  = $pdo->query("SELECT COUNT(*) FROM reservations WHERE MONTH(reservation_date) = $filter_month AND YEAR(reservation_date) = $filter_year AND status IN ('Confirmed', 'Completed')")->fetchColumn();
+$stats['this_month_revenue']   = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM reservations WHERE MONTH(reservation_date) = $filter_month AND YEAR(reservation_date) = $filter_year AND status IN ('Confirmed', 'Completed')")->fetchColumn();
+$stats['total_customers']      = $pdo->query("SELECT COUNT(*) FROM customers")->fetchColumn();
+$stats['avg_rating']           = $pdo->query("SELECT COALESCE(AVG(rating), 0) FROM feedback WHERE MONTH(feedback_date) = $filter_month AND YEAR(feedback_date) = $filter_year")->fetchColumn();
+
+// Monthly booking trends — now scoped to selected $trend_year
+$trend_stmt = $pdo->prepare("
+    SELECT
+        DATE_FORMAT(reservation_date, '%Y-%m') AS month,
+        DATE_FORMAT(reservation_date, '%b %Y') AS month_label,
+        SUM(CASE WHEN status IN ('Pending', 'Confirmed', 'Completed') THEN 1 ELSE 0 END) AS total_bookings,
+        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN 1 ELSE 0 END) AS successful_bookings,
+        SUM(CASE WHEN status IN ('Confirmed', 'Completed') THEN total_amount ELSE 0 END) AS revenue,
+        SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled_bookings
     FROM reservations
-    WHERE reservation_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    WHERE YEAR(reservation_date) = ?
     GROUP BY DATE_FORMAT(reservation_date, '%Y-%m'), DATE_FORMAT(reservation_date, '%b %Y')
     ORDER BY month ASC
-";
-$monthly_data = $pdo->query($monthly_query)->fetchAll(PDO::FETCH_ASSOC);
+");
+$trend_stmt->execute([$trend_year]);
+$monthly_data = $trend_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Branch performance
+// Available trend years for the year-picker (years that actually have data,
+// ensuring the current year is always included).
+$years_stmt = $pdo->query("
+    SELECT DISTINCT YEAR(reservation_date) AS y
+    FROM reservations
+    WHERE reservation_date IS NOT NULL
+    ORDER BY y DESC
+");
+$available_trend_years = array_map('intval', $years_stmt->fetchAll(PDO::FETCH_COLUMN));
+if (!in_array($current_year, $available_trend_years, true)) {
+    $available_trend_years[] = $current_year;
+    rsort($available_trend_years);
+}
+
+// Branch performance & reservation type distribution (unchanged)
 $branch_query = "
-    SELECT 
-        b.branch_id,
-        b.branch_name,
-        SUM(CASE WHEN r.status IN ('Pending', 'Confirmed', 'Completed') THEN 1 ELSE 0 END) as total_reservations,
-        SUM(CASE WHEN r.status = 'Confirmed' THEN 1 ELSE 0 END) as confirmed_count,
-        SUM(CASE WHEN r.status = 'Completed' THEN 1 ELSE 0 END) as completed_count,
-        COALESCE(SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN r.total_amount ELSE 0 END), 0) as total_revenue,
+    SELECT
+        b.branch_id, b.branch_name,
+        SUM(CASE WHEN r.status IN ('Pending', 'Confirmed', 'Completed') THEN 1 ELSE 0 END) AS total_reservations,
+        SUM(CASE WHEN r.status = 'Confirmed' THEN 1 ELSE 0 END) AS confirmed_count,
+        SUM(CASE WHEN r.status = 'Completed' THEN 1 ELSE 0 END) AS completed_count,
+        COALESCE(SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN r.total_amount ELSE 0 END), 0) AS total_revenue,
         COALESCE(
             SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN r.total_amount ELSE 0 END) /
             NULLIF(SUM(CASE WHEN r.status IN ('Confirmed', 'Completed') THEN 1 ELSE 0 END), 0)
-        , 0) as avg_revenue_per_booking,
+        , 0) AS avg_revenue_per_booking,
         COALESCE((
-            SELECT AVG(f.rating)
-            FROM feedback f
-            WHERE f.branch_id = b.branch_id
-        ), 0) as avg_rating
+            SELECT AVG(f.rating) FROM feedback f WHERE f.branch_id = b.branch_id
+        ), 0) AS avg_rating
     FROM branches b
     LEFT JOIN reservations r ON b.branch_id = r.branch_id
         AND MONTH(r.reservation_date) = $filter_month
@@ -88,12 +264,8 @@ $branch_query = "
 ";
 $branch_stats = $pdo->query($branch_query)->fetchAll(PDO::FETCH_ASSOC);
 
-// Reservation type distribution
 $type_query = "
-    SELECT 
-        reservation_type,
-        COUNT(*) as count,
-        SUM(total_amount) as revenue
+    SELECT reservation_type, COUNT(*) AS count, SUM(total_amount) AS revenue
     FROM reservations
     WHERE status IN ('Confirmed', 'Completed')
       AND MONTH(reservation_date) = $filter_month
@@ -102,32 +274,69 @@ $type_query = "
 ";
 $reservation_types = $pdo->query($type_query)->fetchAll(PDO::FETCH_ASSOC);
 
-// Get data for current view
+// =========================================================================
+// View-specific data
+// =========================================================================
 if ($view === 'customers') {
-    $data = $pdo->query("SELECT * FROM customers ORDER BY customer_id DESC")->fetchAll();
     $pageTitle = "Registered Customers";
+
+    // Search
+    $cust_search = trim($_GET['q'] ?? '');
+    $where_sql = '';
+    $params = [];
+    if ($cust_search !== '') {
+        $where_sql = "WHERE full_name LIKE :q OR email LIKE :q OR contact_number LIKE :q";
+        $params[':q'] = '%' . $cust_search . '%';
+    }
+
+    // Pagination
+    $cust_per_page = 10;
+    $cust_page     = max(1, (int)($_GET['page'] ?? 1));
+
+    $count_stmt = $pdo->prepare("SELECT COUNT(*) FROM customers $where_sql");
+    $count_stmt->execute($params);
+    $cust_total = (int)$count_stmt->fetchColumn();
+    $cust_pages = max(1, (int)ceil($cust_total / $cust_per_page));
+    $cust_page  = min($cust_page, $cust_pages);
+    $cust_offset = ($cust_page - 1) * $cust_per_page;
+
+    $sql = "SELECT * FROM customers $where_sql
+            ORDER BY customer_id DESC
+            LIMIT $cust_per_page OFFSET $cust_offset";
+    $list_stmt = $pdo->prepare($sql);
+    $list_stmt->execute($params);
+    $data = $list_stmt->fetchAll(PDO::FETCH_ASSOC);
+
 } elseif ($view === 'analytics') {
     $pageTitle = "Booking Analytics";
+
+} elseif ($view === 'admins') {
+    $pageTitle = "Admin Management";
+    $admins = $pdo->query("
+        SELECT ap.admin_id, ap.full_name, ap.is_super_admin, ap.created_at,
+               ap.last_password_change, ap.must_change_password,
+               u.username, u.user_id, u.is_active,
+               creator.full_name AS created_by_name
+        FROM admin_profiles ap
+        JOIN users u             ON u.user_id = ap.user_id
+        LEFT JOIN admin_profiles creator ON creator.admin_id = ap.created_by_admin_id
+        ORDER BY ap.is_super_admin DESC, ap.created_at ASC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
 } elseif ($view === 'feedback') {
     $pageTitle = "User Feedback";
 
-    // Pagination for feedback
-    $fb_per_page  = 10;
-    $fb_page      = max(1, (int)($_GET['page'] ?? 1));
-    $fb_total     = $pdo->query("SELECT COUNT(*) FROM feedback")->fetchColumn();
-    $fb_pages     = max(1, ceil($fb_total / $fb_per_page));
-    $fb_page      = min($fb_page, $fb_pages);
-    $fb_offset    = ($fb_page - 1) * $fb_per_page;
+    $fb_per_page = 10;
+    $fb_page     = max(1, (int)($_GET['page'] ?? 1));
 
-    // Rating filter
     $allowed_ratings = ['All', '1', '2', '3', '4', '5'];
     $filter_rating   = (isset($_GET['rating']) && in_array($_GET['rating'], $allowed_ratings))
                        ? $_GET['rating'] : 'All';
     $rating_where    = ($filter_rating !== 'All') ? "WHERE f.rating = " . (int)$filter_rating : "";
 
-    $fb_total = $pdo->query("SELECT COUNT(*) FROM feedback f $rating_where")->fetchColumn();
-    $fb_pages = max(1, ceil($fb_total / $fb_per_page));
-    $fb_page  = min($fb_page, $fb_pages);
+    $fb_total  = $pdo->query("SELECT COUNT(*) FROM feedback f $rating_where")->fetchColumn();
+    $fb_pages  = max(1, (int)ceil($fb_total / $fb_per_page));
+    $fb_page   = min($fb_page, $fb_pages);
     $fb_offset = ($fb_page - 1) * $fb_per_page;
 
     $feedback_data = $pdo->query("
@@ -140,40 +349,39 @@ if ($view === 'customers') {
         LIMIT $fb_per_page OFFSET $fb_offset
     ")->fetchAll(PDO::FETCH_ASSOC);
 
-    // Summary stats for feedback header cards
-    $fb_stats['total']   = $pdo->query("SELECT COUNT(*) FROM feedback")->fetchColumn();
-    $fb_stats['avg']     = $pdo->query("SELECT COALESCE(AVG(rating),0) FROM feedback")->fetchColumn();
-    $fb_stats['5star']   = $pdo->query("SELECT COUNT(*) FROM feedback WHERE rating = 5")->fetchColumn();
-    $fb_stats['1star']   = $pdo->query("SELECT COUNT(*) FROM feedback WHERE rating = 1")->fetchColumn();
+    $fb_stats['total'] = $pdo->query("SELECT COUNT(*) FROM feedback")->fetchColumn();
+    $fb_stats['avg']   = $pdo->query("SELECT COALESCE(AVG(rating),0) FROM feedback")->fetchColumn();
+    $fb_stats['5star'] = $pdo->query("SELECT COUNT(*) FROM feedback WHERE rating = 5")->fetchColumn();
+    $fb_stats['1star'] = $pdo->query("SELECT COUNT(*) FROM feedback WHERE rating = 1")->fetchColumn();
+
 } else {
-// Filter
     $allowed_statuses = ['All', 'Pending', 'Confirmed', 'Completed', 'Cancelled'];
     $filter_status = isset($_GET['status']) && in_array($_GET['status'], $allowed_statuses)
                      ? $_GET['status'] : 'All';
 
-    // NEW: Exclude unpaid checkout holds from the admin view globally
     $exclude_holds = "NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')";
-    
+
     $where_clause = "WHERE " . $exclude_holds;
     if ($filter_status !== 'All') {
         $where_clause .= " AND r.status = " . $pdo->quote($filter_status);
     }
 
-    // Pagination
-    $per_page = 10;
+    $per_page     = 10;
     $current_page = max(1, (int)($_GET['page'] ?? 1));
     $total_rows   = $pdo->query("SELECT COUNT(*) FROM reservations r $where_clause")->fetchColumn();
-    $total_pages  = max(1, ceil($total_rows / $per_page));
+    $total_pages  = max(1, (int)ceil($total_rows / $per_page));
     $current_page = min($current_page, $total_pages);
     $offset       = ($current_page - 1) * $per_page;
 
-    $data = $pdo->query("SELECT r.*, c.full_name, b.branch_name 
-                         FROM reservations r 
-                         JOIN customers c ON r.customer_id = c.customer_id 
-                         JOIN branches b ON r.branch_id = b.branch_id 
-                         $where_clause
-                         ORDER BY r.reservation_id DESC
-                         LIMIT $per_page OFFSET $offset")->fetchAll();
+    $data = $pdo->query("
+        SELECT r.*, c.full_name, b.branch_name
+        FROM reservations r
+        JOIN customers c ON r.customer_id = c.customer_id
+        JOIN branches  b ON r.branch_id   = b.branch_id
+        $where_clause
+        ORDER BY r.reservation_id DESC
+        LIMIT $per_page OFFSET $offset
+    ")->fetchAll();
     $pageTitle = "Reservation Overview";
 }
 ?>
@@ -188,7 +396,7 @@ if ($view === 'customers') {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
-            background: linear-gradient(rgba(0, 119, 182, 0.1), rgba(0, 119, 182, 0.1)), 
+            background: linear-gradient(rgba(0, 119, 182, 0.1), rgba(0, 119, 182, 0.1)),
                         url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80');
             background-size: cover;
             background-position: center;
@@ -224,47 +432,22 @@ if ($view === 'customers') {
             padding: 0 10px;
         }
 
-        .nav-links {
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
+        .nav-links { list-style: none; display: flex; flex-direction: column; gap: 4px; }
         .nav-links a {
-            text-decoration: none;
-            color: var(--text-dark);
-            padding: 12px 20px;
-            border-radius: 12px;
-            transition: 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-weight: 500;
+            text-decoration: none; color: var(--text-dark);
+            padding: 12px 20px; border-radius: 12px; transition: 0.3s;
+            display: flex; align-items: center; gap: 12px; font-weight: 500;
         }
-
         .nav-links a:hover, .nav-links a.active {
-            background: var(--primary);
-            color: white;
+            background: var(--primary); color: white;
             box-shadow: 0 4px 15px rgba(0, 119, 182, 0.3);
             transform: translateX(5px);
         }
 
-        .logout-btn {
-            margin-top: 8px;
-            color: #ef476f !important;
-            border: 1px solid #ef476f;
-        }
-        .logout-btn:hover {
-            background: #ef476f !important;
-            color: white !important;
-        }
+        .logout-btn { margin-top: 8px; color: #ef476f !important; border: 1px solid #ef476f; }
+        .logout-btn:hover { background: #ef476f !important; color: white !important; }
 
-        .main-content {
-            flex: 1;
-            padding: 3rem;
-            overflow-y: auto;
-        }
+        .main-content { flex: 1; padding: 3rem; overflow-y: auto; }
 
         .glass-panel {
             background: rgba(255, 255, 255, 0.9);
@@ -277,11 +460,7 @@ if ($view === 'customers') {
             margin-bottom: 2rem;
         }
 
-        h1 {
-            color: var(--primary-dark);
-            margin-bottom: 1.5rem;
-            font-size: 2rem;
-        }
+        h1 { color: var(--primary-dark); margin-bottom: 1.5rem; font-size: 2rem; }
 
         /* Stats Cards */
         .stats-grid {
@@ -290,72 +469,21 @@ if ($view === 'customers') {
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
-
         .stat-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 15px;
+            background: white; padding: 1.5rem; border-radius: 15px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.08);
             transition: transform 0.2s, box-shadow 0.2s;
         }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.12);
-        }
-
-        .stat-card h3 {
-            color: #7f8c8d;
-            font-size: 0.85rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            text-transform: uppercase;
-        }
-
-        .stat-card .stat-value {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 0.3rem;
-        }
-
-        .stat-card .stat-label {
-            color: #95a5a6;
-            font-size: 0.8rem;
-        }
-
-        .stat-card.primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-
-        .stat-card.primary h3,
-        .stat-card.primary .stat-value,
-        .stat-card.primary .stat-label {
-            color: white;
-        }
-
-        .stat-card.success {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white;
-        }
-
-        .stat-card.success h3,
-        .stat-card.success .stat-value,
-        .stat-card.success .stat-label {
-            color: white;
-        }
-
-        .stat-card.info {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-        }
-
-        .stat-card.info h3,
-        .stat-card.info .stat-value,
-        .stat-card.info .stat-label {
-            color: white;
-        }
+        .stat-card:hover { transform: translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.12); }
+        .stat-card h3 { color: #7f8c8d; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; }
+        .stat-card .stat-value { font-size: 2rem; font-weight: bold; color: #2c3e50; margin-bottom: 0.3rem; }
+        .stat-card .stat-label { color: #95a5a6; font-size: 0.8rem; }
+        .stat-card.primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .stat-card.primary h3, .stat-card.primary .stat-value, .stat-card.primary .stat-label { color: white; }
+        .stat-card.success { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; }
+        .stat-card.success h3, .stat-card.success .stat-value, .stat-card.success .stat-label { color: white; }
+        .stat-card.info { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; }
+        .stat-card.info h3, .stat-card.info .stat-value, .stat-card.info .stat-label { color: white; }
 
         /* Charts */
         .charts-grid {
@@ -364,312 +492,391 @@ if ($view === 'customers') {
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
-
         .chart-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 15px;
+            background: white; padding: 1.5rem; border-radius: 15px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.08);
         }
-
-        .chart-card h2 {
-            color: #2c3e50;
-            margin-bottom: 1rem;
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        .chart-container {
-            position: relative;
-            height: 300px;
-        }
+        .chart-card h2 { color: #2c3e50; margin-bottom: 1rem; font-size: 1.1rem; font-weight: 600; }
+        .chart-container { position: relative; height: 300px; }
 
         /* Tables */
-        table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-            margin-top: 1rem;
-        }
-
-        th {
-            background: var(--primary);
-            color: white;
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
-        }
-        
+        table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 1rem; }
+        th { background: var(--primary); color: white; padding: 15px; text-align: left; font-weight: 600; }
         th:first-child { border-top-left-radius: 8px; }
-        th:last-child { border-top-right-radius: 8px; }
-
-        td {
-            padding: 15px;
-            border-bottom: 1px solid rgba(0,0,0,0.05);
-            color: #444;
-            vertical-align: middle;
-        }
-
+        th:last-child  { border-top-right-radius: 8px; }
+        td { padding: 15px; border-bottom: 1px solid rgba(0,0,0,0.05); color: #444; vertical-align: middle; }
         tr:last-child td { border-bottom: none; }
         tr:hover td { background: rgba(0, 119, 182, 0.05); }
 
-        .status {
-            padding: 6px 12px;
-            border-radius: 50px;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
+        .status { padding: 6px 12px; border-radius: 50px; font-size: 0.85rem; font-weight: 600; }
         .status.confirmed  { background: #d4edda; color: #155724; }
         .status.pending    { background: #fff3cd; color: #856404; }
         .status.cancelled  { background: #f8d7da; color: #721c24; }
         .status.completed  { background: #cce5ff; color: #004085; }
 
         .btn-action {
-            text-decoration: none;
-            padding: 6px 15px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            transition: 0.2s;
-            background: var(--primary);
-            color: white;
-            display: inline-block;
-            white-space: nowrap;
+            text-decoration: none; padding: 6px 15px; border-radius: 6px;
+            font-size: 0.85rem; font-weight: 600; transition: 0.2s;
+            background: var(--primary); color: white; display: inline-block; white-space: nowrap;
+            border: none; cursor: pointer;
         }
-        .btn-action:hover {
-            filter: brightness(1.15);
-            transform: scale(1.05);
-        }
-        .btn-action.btn-reject {
-            background: #ef476f;
-        }
+        .btn-action:hover { filter: brightness(1.15); transform: scale(1.05); }
+        .btn-action.btn-reject { background: #ef476f; }
+        .btn-action.btn-secondary { background: white; color: var(--primary); border: 2px solid var(--primary); }
+        .btn-action.btn-secondary:hover { background: var(--primary); color: white; }
 
-        .action-buttons {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            flex-wrap: nowrap;
-        }
+        .action-buttons { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; }
 
         @media (max-width: 768px) {
-            .charts-grid {
-                grid-template-columns: 1fr;
-            }
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
+            .charts-grid { grid-template-columns: 1fr; }
+            .stats-grid  { grid-template-columns: 1fr; }
         }
+
         /* Filter Bar */
-.filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 1.5rem; flex-wrap: wrap; }
-.filter-bar > span { font-weight: 600; color: #555; font-size: 0.9rem; }
-.filter-btn {
-    text-decoration: none; padding: 7px 16px; border-radius: 50px;
-    font-size: 0.83rem; font-weight: 600; border: 2px solid #ddd;
-    color: #555; background: white; transition: 0.2s;
-}
-.filter-btn:hover { border-color: var(--primary); color: var(--primary); }
-.filter-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
-.filter-btn.f-pending.active   { background: #856404; border-color: #856404; }
-.filter-btn.f-confirmed.active { background: #155724; border-color: #155724; }
-.filter-btn.f-completed.active { background: #004085; border-color: #004085; }
-.filter-btn.f-cancelled.active { background: #721c24; border-color: #721c24; }
+        .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 1.5rem; flex-wrap: wrap; }
+        .filter-bar > span { font-weight: 600; color: #555; font-size: 0.9rem; }
+        .filter-btn {
+            text-decoration: none; padding: 7px 16px; border-radius: 50px;
+            font-size: 0.83rem; font-weight: 600; border: 2px solid #ddd;
+            color: #555; background: white; transition: 0.2s; cursor: pointer;
+        }
+        .filter-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .filter-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
+        .filter-btn.f-pending.active   { background: #856404; border-color: #856404; }
+        .filter-btn.f-confirmed.active { background: #155724; border-color: #155724; }
+        .filter-btn.f-completed.active { background: #004085; border-color: #004085; }
+        .filter-btn.f-cancelled.active { background: #721c24; border-color: #721c24; }
 
-/* Pagination */
-.pagination { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 1.5rem; flex-wrap: wrap; }
-.page-btn {
-    text-decoration: none; padding: 8px 13px; border-radius: 8px;
-    font-size: 0.875rem; font-weight: 600; border: 2px solid #ddd;
-    color: #555; background: white; transition: 0.2s; min-width: 38px; text-align: center;
-}
-.page-btn:hover { border-color: var(--primary); color: var(--primary); }
-.page-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
-.page-btn.disabled { opacity: 0.35; pointer-events: none; }
-.page-info { font-size: 0.82rem; color: #999; margin-left: 6px; }
+        /* Pagination */
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 1.5rem; flex-wrap: wrap; }
+        .page-btn {
+            text-decoration: none; padding: 8px 13px; border-radius: 8px;
+            font-size: 0.875rem; font-weight: 600; border: 2px solid #ddd;
+            color: #555; background: white; transition: 0.2s; min-width: 38px; text-align: center;
+        }
+        .page-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .page-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 3px 10px rgba(0,119,182,0.3); }
+        .page-btn.disabled { opacity: 0.35; pointer-events: none; }
+        .page-info { font-size: 0.82rem; color: #999; margin-left: 6px; }
 
-/* ── Feedback Section ─────────────────────────────────────── */
-.feedback-summary {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 1.2rem;
-    margin-bottom: 2rem;
-}
-.fb-stat {
-    background: white;
-    border-radius: 14px;
-    padding: 1.2rem 1.5rem;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.07);
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-.fb-stat:hover { transform: translateY(-4px); box-shadow: 0 8px 22px rgba(0,0,0,0.11); }
-.fb-stat .fb-icon {
-    width: 46px; height: 46px; border-radius: 12px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.2rem; flex-shrink: 0;
-}
-.fb-stat .fb-icon.blue  { background: rgba(102,126,234,0.15); color: #667eea; }
-.fb-stat .fb-icon.gold  { background: rgba(243,156,18,0.15);  color: #f39c12; }
-.fb-stat .fb-icon.green { background: rgba(46,204,113,0.15);  color: #27ae60; }
-.fb-stat .fb-icon.red   { background: rgba(239,71,111,0.15);  color: #ef476f; }
-.fb-stat .fb-text strong { display: block; font-size: 1.6rem; font-weight: 700; color: #2c3e50; line-height: 1; }
-.fb-stat .fb-text span   { font-size: 0.78rem; color: #95a5a6; text-transform: uppercase; letter-spacing: 0.04em; }
+        /* ── Feedback Section ───────────────────────────────────── */
+        .feedback-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1.2rem; margin-bottom: 2rem; }
+        .fb-stat { background: white; border-radius: 14px; padding: 1.2rem 1.5rem; box-shadow: 0 4px 15px rgba(0,0,0,0.07); display: flex; align-items: center; gap: 14px; transition: transform 0.2s, box-shadow 0.2s; }
+        .fb-stat:hover { transform: translateY(-4px); box-shadow: 0 8px 22px rgba(0,0,0,0.11); }
+        .fb-stat .fb-icon { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0; }
+        .fb-stat .fb-icon.blue  { background: rgba(102,126,234,0.15); color: #667eea; }
+        .fb-stat .fb-icon.gold  { background: rgba(243,156,18,0.15);  color: #f39c12; }
+        .fb-stat .fb-icon.green { background: rgba(46,204,113,0.15);  color: #27ae60; }
+        .fb-stat .fb-icon.red   { background: rgba(239,71,111,0.15);  color: #ef476f; }
+        .fb-stat .fb-text strong { display: block; font-size: 1.6rem; font-weight: 700; color: #2c3e50; line-height: 1; }
+        .fb-stat .fb-text span   { font-size: 0.78rem; color: #95a5a6; text-transform: uppercase; letter-spacing: 0.04em; }
 
-/* Rating filter bar (re-use filter-btn but gold active) */
-.filter-btn.f-rating.active { background: #f39c12; border-color: #f39c12; color: white; box-shadow: 0 3px 10px rgba(243,156,18,0.35); }
+        .filter-btn.f-rating.active { background: #f39c12; border-color: #f39c12; color: white; box-shadow: 0 3px 10px rgba(243,156,18,0.35); }
 
-/* Feedback card grid */
-.feedback-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.2rem;
-    margin-top: 0.5rem;
-}
-.feedback-card {
-    background: white;
-    border-radius: 16px;
-    padding: 1.4rem 1.5rem;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.07);
-    border-left: 4px solid var(--primary);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    transition: transform 0.2s, box-shadow 0.2s;
-    position: relative;
-}
-.feedback-card:hover { transform: translateY(-4px); box-shadow: 0 10px 28px rgba(0,0,0,0.11); }
-.feedback-card .fc-header {
-    display: flex; align-items: center; gap: 12px;
-}
-.fc-avatar {
-    width: 38px; height: 38px; border-radius: 50%;
-    background: var(--secondary); color: white;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 0.95rem; flex-shrink: 0;
-}
-.fc-meta strong { display: block; font-size: 0.95rem; color: #2c3e50; }
-.fc-meta span   { font-size: 0.78rem; color: #95a5a6; }
-.fc-stars { color: #f39c12; font-size: 0.95rem; letter-spacing: 2px; }
-.fc-stars.low { color: #e74c3c; }
-.fc-stars.mid { color: #f39c12; }
-.fc-stars.high { color: #27ae60; }
-.fc-comment {
-    font-size: 0.9rem; color: #555; line-height: 1.55;
-    border-top: 1px solid rgba(0,0,0,0.06);
-    padding-top: 10px; margin-top: 2px;
-    font-style: italic;
-}
-.fc-footer {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 0.78rem; color: #aaa; margin-top: auto; padding-top: 8px;
-    border-top: 1px solid rgba(0,0,0,0.05);
-}
-.fc-branch {
-    background: rgba(0,119,182,0.1); color: var(--primary-dark);
-    padding: 3px 10px; border-radius: 50px; font-size: 0.76rem; font-weight: 600;
-}
-.fc-badge {
-    position: absolute; top: 14px; right: 14px;
-    width: 28px; height: 28px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.8rem; font-weight: 700; color: white;
-}
-.fc-badge.r5,.fc-badge.r4 { background: #27ae60; }
-.fc-badge.r3               { background: #f39c12; }
-.fc-badge.r2,.fc-badge.r1  { background: #e74c3c; }
+        .feedback-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.2rem; margin-top: 0.5rem; }
+        .feedback-card { background: white; border-radius: 16px; padding: 1.4rem 1.5rem; box-shadow: 0 4px 15px rgba(0,0,0,0.07); border-left: 4px solid var(--primary); display: flex; flex-direction: column; gap: 10px; transition: transform 0.2s, box-shadow 0.2s; position: relative; }
+        .feedback-card:hover { transform: translateY(-4px); box-shadow: 0 10px 28px rgba(0,0,0,0.11); }
+        .feedback-card .fc-header { display: flex; align-items: center; gap: 12px; }
+        .fc-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--secondary); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem; flex-shrink: 0; }
+        .fc-meta strong { display: block; font-size: 0.95rem; color: #2c3e50; }
+        .fc-meta span   { font-size: 0.78rem; color: #95a5a6; }
+        .fc-stars { color: #f39c12; font-size: 0.95rem; letter-spacing: 2px; }
+        .fc-stars.low { color: #e74c3c; }
+        .fc-stars.mid { color: #f39c12; }
+        .fc-stars.high { color: #27ae60; }
+        .fc-comment { font-size: 0.9rem; color: #555; line-height: 1.55; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 10px; margin-top: 2px; font-style: italic; }
+        .fc-footer { display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #aaa; margin-top: auto; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.05); }
+        .fc-branch { background: rgba(0,119,182,0.1); color: var(--primary-dark); padding: 3px 10px; border-radius: 50px; font-size: 0.76rem; font-weight: 600; }
+        .fc-badge { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; color: white; }
+        .fc-badge.r5,.fc-badge.r4 { background: #27ae60; }
+        .fc-badge.r3               { background: #f39c12; }
+        .fc-badge.r2,.fc-badge.r1  { background: #e74c3c; }
 
-@media (max-width: 768px) {
-    .feedback-grid { grid-template-columns: 1fr; }
-    .feedback-summary { grid-template-columns: 1fr 1fr; }
-}
+        @media (max-width: 768px) {
+            .feedback-grid    { grid-template-columns: 1fr; }
+            .feedback-summary { grid-template-columns: 1fr 1fr; }
+        }
 
-/* ── Analytics Date Filter ────────────────────────────────────── */
-.analytics-filter-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 2rem;
-    background: white;
-    border: 1px solid rgba(0,119,182,0.15);
-    border-radius: 50px;
-    padding: 10px 20px;
-    box-shadow: 0 2px 10px rgba(0,119,182,0.08);
-}
-.analytics-filter-bar .filter-label {
-    font-size: 0.88rem;
-    font-weight: 600;
-    color: #555;
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-}
-.analytics-filter-bar .filter-label i { color: var(--primary); }
-.af-select {
-    appearance: none;
-    -webkit-appearance: none;
-    background: #f4f8fc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%230077b6' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") no-repeat right 10px center;
-    border: 2px solid #ddd;
-    border-radius: 50px;
-    padding: 7px 32px 7px 14px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #2c3e50;
-    cursor: pointer;
-    transition: border-color 0.2s, box-shadow 0.2s;
-    outline: none;
-}
-.af-select:hover, .af-select:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
-}
-.af-apply-btn {
-    background: var(--primary);
-    color: white;
-    border: none;
-    padding: 8px 22px;
-    border-radius: 50px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    box-shadow: 0 3px 10px rgba(0,119,182,0.3);
-}
-.af-apply-btn:hover {
-    filter: brightness(1.12);
-    transform: translateY(-1px);
-    box-shadow: 0 5px 15px rgba(0,119,182,0.4);
-}
-.af-reset-link {
-    font-size: 0.8rem;
-    color: #999;
-    text-decoration: none;
-    margin-left: 2px;
-    padding: 7px 12px;
-    border-radius: 50px;
-    transition: color 0.2s, background 0.2s;
-    white-space: nowrap;
-}
-.af-reset-link:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
-.af-period-badge {
-    margin-left: auto;
-    font-size: 0.78rem;
-    color: var(--primary);
-    background: rgba(0,119,182,0.1);
-    padding: 5px 14px;
-    border-radius: 50px;
-    font-weight: 600;
-    white-space: nowrap;
-}
-@media (max-width: 768px) {
-    .analytics-filter-bar { border-radius: 16px; }
-    .af-period-badge { margin-left: 0; }
-}
+        /* ─────────────────────────────────────────────────────────────
+           ANALYTICS DATE FILTER (REDESIGNED)
+           Two-row layout: quick presets row + custom selector row, all
+           wrapped in one cohesive card that matches the system's blue.
+           ───────────────────────────────────────────────────────────── */
+        .analytics-filter-card {
+            background: linear-gradient(135deg, rgba(0,119,182,0.06) 0%, rgba(102,126,234,0.06) 100%);
+            border: 1px solid rgba(0,119,182,0.18);
+            border-radius: 18px;
+            padding: 1.2rem 1.4rem;
+            margin-bottom: 1.8rem;
+            box-shadow: 0 4px 18px rgba(0,119,182,0.08);
+        }
+        .analytics-filter-card .af-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 0.9rem; flex-wrap: wrap; gap: 0.6rem;
+        }
+        .analytics-filter-card .af-title {
+            font-size: 0.95rem; font-weight: 700; color: var(--primary-dark);
+            display: flex; align-items: center; gap: 8px;
+        }
+        .analytics-filter-card .af-title i { color: var(--primary); }
+        .af-period-badge-new {
+            font-size: 0.78rem; color: white;
+            background: var(--primary);
+            padding: 6px 14px; border-radius: 50px;
+            font-weight: 600; white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 6px;
+            box-shadow: 0 3px 10px rgba(0,119,182,0.25);
+        }
+
+        .af-presets {
+            display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0.9rem;
+        }
+        .af-preset {
+            text-decoration: none; padding: 7px 14px; border-radius: 50px;
+            font-size: 0.78rem; font-weight: 600; border: 1.5px solid rgba(0,119,182,0.25);
+            color: var(--primary); background: white; transition: 0.2s; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 5px;
+        }
+        .af-preset:hover { border-color: var(--primary); background: rgba(0,119,182,0.08); }
+        .af-preset.active {
+            background: var(--primary); border-color: var(--primary); color: white;
+            box-shadow: 0 3px 10px rgba(0,119,182,0.3);
+        }
+
+        .af-custom-row {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding-top: 0.8rem; border-top: 1px dashed rgba(0,119,182,0.2);
+        }
+        .af-custom-row .af-custom-label {
+            font-size: 0.82rem; font-weight: 600; color: #555;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .af-select {
+            appearance: none; -webkit-appearance: none;
+            background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%230077b6' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") no-repeat right 10px center;
+            border: 2px solid rgba(0,119,182,0.2); border-radius: 50px;
+            padding: 7px 32px 7px 14px; font-size: 0.85rem; font-weight: 600;
+            color: #2c3e50; cursor: pointer; outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .af-select:hover, .af-select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+        }
+        .af-apply-btn {
+            background: var(--primary); color: white; border: none;
+            padding: 8px 22px; border-radius: 50px; font-size: 0.85rem; font-weight: 600;
+            cursor: pointer; transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
+            display: inline-flex; align-items: center; gap: 6px;
+            box-shadow: 0 3px 10px rgba(0,119,182,0.3);
+        }
+        .af-apply-btn:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0,119,182,0.4); }
+        .af-reset-link {
+            font-size: 0.8rem; color: #999; text-decoration: none;
+            padding: 7px 14px; border-radius: 50px;
+            transition: color 0.2s, background 0.2s;
+        }
+        .af-reset-link:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
+
+        @media (max-width: 768px) {
+            .af-custom-row { flex-direction: column; align-items: stretch; }
+            .af-custom-row .af-select, .af-custom-row .af-apply-btn { width: 100%; justify-content: center; }
+        }
+
+        /* ─────────────────────────────────────────────────────────────
+           TREND-YEAR NAVIGATOR (in Monthly Booking Trends card)
+           ───────────────────────────────────────────────────────────── */
+        .trend-year-nav {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: rgba(0,119,182,0.08); border-radius: 50px; padding: 3px;
+        }
+        .trend-year-nav a, .trend-year-nav button {
+            text-decoration: none; border: none; background: transparent;
+            color: var(--primary); font-weight: 700; font-size: 0.82rem;
+            padding: 5px 10px; border-radius: 50px; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 5px;
+            transition: 0.2s;
+        }
+        .trend-year-nav a.disabled { opacity: 0.35; pointer-events: none; }
+        .trend-year-nav a:hover, .trend-year-nav button:hover {
+            background: white; box-shadow: 0 2px 6px rgba(0,119,182,0.15);
+        }
+        .trend-year-current {
+            background: var(--primary) !important; color: white !important;
+            padding: 5px 14px !important; box-shadow: 0 2px 8px rgba(0,119,182,0.3);
+            position: relative;
+        }
+        .trend-year-dropdown {
+            position: relative;
+        }
+        .trend-year-menu {
+            display: none; position: absolute; top: 100%; right: 0; margin-top: 6px;
+            background: white; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            border: 1px solid rgba(0,119,182,0.15); padding: 6px; z-index: 50;
+            min-width: 110px; max-height: 240px; overflow-y: auto;
+        }
+        .trend-year-menu.open { display: block; }
+        .trend-year-menu a {
+            display: block; padding: 7px 14px; border-radius: 8px;
+            color: #444; font-size: 0.85rem; font-weight: 500; text-decoration: none;
+        }
+        .trend-year-menu a:hover { background: rgba(0,119,182,0.08); color: var(--primary); }
+        .trend-year-menu a.active { background: var(--primary); color: white; font-weight: 700; }
+
+        .chart-card-header {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 10px; flex-wrap: wrap; margin-bottom: 1rem;
+        }
+        .chart-card-header h2 { margin: 0 !important; }
+
+        /* ─────────────────────────────────────────────────────────────
+           ALERT BANNERS (used by all admin actions)
+           ───────────────────────────────────────────────────────────── */
+        .alert {
+            padding: 12px 18px; border-radius: 12px; margin-bottom: 1.2rem;
+            display: flex; align-items: flex-start; gap: 10px;
+            font-size: 0.9rem; animation: fadeIn 0.4s ease-out;
+        }
+        .alert i { margin-top: 2px; flex-shrink: 0; }
+        .alert.success { background: #d4edda; color: #155724; border-left: 4px solid #155724; }
+        .alert.error   { background: #f8d7da; color: #721c24; border-left: 4px solid #721c24; }
+
+        /* ─────────────────────────────────────────────────────────────
+           ADMIN MANAGEMENT VIEW
+           ───────────────────────────────────────────────────────────── */
+        .admin-toolbar {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem;
+        }
+        .admin-toolbar .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .badge-pill {
+            padding: 4px 12px; border-radius: 50px;
+            font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em;
+            display: inline-flex; align-items: center; gap: 5px;
+        }
+        .badge-super  { background: linear-gradient(135deg, #f6d365, #fda085); color: #6b3e00; }
+        .badge-admin  { background: rgba(0,119,182,0.12); color: var(--primary-dark); }
+        .badge-warn   { background: rgba(243,156,18,0.15); color: #b06d00; }
+
+        /* ─────────────────────────────────────────────────────────────
+           CUSTOMERS — search + export toolbar
+           ───────────────────────────────────────────────────────────── */
+        .customers-toolbar {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem;
+        }
+        .search-box {
+            display: flex; align-items: center; gap: 0;
+            background: white; border: 2px solid rgba(0,119,182,0.2);
+            border-radius: 50px; padding: 4px 4px 4px 16px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            min-width: 280px;
+        }
+        .search-box:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+        }
+        .search-box i { color: var(--primary); margin-right: 8px; }
+        .search-box input {
+            border: none; outline: none; flex: 1;
+            font-size: 0.88rem; padding: 7px 4px; background: transparent;
+            color: #2c3e50;
+        }
+        .search-box button {
+            background: var(--primary); color: white; border: none;
+            padding: 7px 18px; border-radius: 50px; font-weight: 600;
+            cursor: pointer; font-size: 0.82rem;
+            transition: filter 0.2s;
+        }
+        .search-box button:hover { filter: brightness(1.12); }
+        .search-clear {
+            text-decoration: none; color: #999; font-size: 0.8rem;
+            padding: 7px 12px; border-radius: 50px;
+            transition: color 0.2s, background 0.2s;
+        }
+        .search-clear:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
+
+        .export-btn {
+            background: linear-gradient(135deg, #20bf6b 0%, #0fb9b1 100%);
+            color: white; border: none; text-decoration: none;
+            padding: 9px 20px; border-radius: 50px;
+            font-size: 0.85rem; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 7px;
+            cursor: pointer; transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
+            box-shadow: 0 3px 10px rgba(32,191,107,0.3);
+        }
+        .export-btn:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 5px 15px rgba(32,191,107,0.4); }
+
+        /* ─────────────────────────────────────────────────────────────
+           MODAL (used by Add Admin & Change Password)
+           ───────────────────────────────────────────────────────────── */
+        .modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(20, 30, 50, 0.55);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            align-items: center; justify-content: center;
+            animation: fadeIn 0.2s ease-out;
+            padding: 1rem;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: white; border-radius: 20px;
+            padding: 2rem; max-width: 480px; width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: modalIn 0.3s ease-out;
+        }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(20px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes fadeIn  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .modal h2 {
+            font-size: 1.25rem; color: var(--primary-dark); margin: 0 0 0.4rem;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .modal h2 i { color: var(--primary); }
+        .modal .modal-subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.2rem; }
+        .modal .form-group { margin-bottom: 1rem; }
+        .modal label {
+            display: block; font-size: 0.82rem; font-weight: 600;
+            color: #555; margin-bottom: 6px;
+        }
+        .modal input[type="text"], .modal input[type="email"], .modal input[type="password"] {
+            width: 100%; padding: 11px 14px; border-radius: 10px;
+            border: 2px solid #e3e8ee; font-size: 0.9rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box; font-family: inherit;
+        }
+        .modal input:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+        }
+        .modal .modal-info {
+            background: rgba(0,119,182,0.07);
+            border-left: 3px solid var(--primary);
+            padding: 10px 14px; border-radius: 8px;
+            font-size: 0.82rem; color: #444; margin-bottom: 1.2rem;
+        }
+        .modal-actions {
+            display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.4rem;
+        }
+        .btn-cancel {
+            padding: 9px 20px; border-radius: 50px;
+            border: 2px solid #ddd; background: white; color: #555;
+            font-weight: 600; font-size: 0.85rem; cursor: pointer;
+            transition: 0.2s; font-family: inherit;
+        }
+        .btn-cancel:hover { border-color: #999; color: #333; }
+        .btn-submit {
+            padding: 9px 24px; border-radius: 50px;
+            background: var(--primary); color: white; border: none;
+            font-weight: 600; font-size: 0.85rem; cursor: pointer;
+            transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
+            box-shadow: 0 3px 10px rgba(0,119,182,0.3);
+            font-family: inherit;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .btn-submit:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0,119,182,0.4); }
     </style>
 </head>
 <body>
@@ -700,6 +907,11 @@ if ($view === 'customers') {
                 </a>
             </li>
             <li>
+                <a href="dashboard.php?view=admins" class="<?= $view === 'admins' ? 'active' : '' ?>">
+                    <i class="fas fa-user-shield"></i> Admins
+                </a>
+            </li>
+            <li>
                 <a href="../logout.php" class="logout-btn">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
@@ -708,8 +920,16 @@ if ($view === 'customers') {
     </nav>
 
     <div class="main-content">
+
+        <?php if ($action_msg): ?>
+            <div class="alert success"><i class="fas fa-check-circle"></i><div><?= $action_msg ?></div></div>
+        <?php endif; ?>
+        <?php if ($action_err): ?>
+            <div class="alert error"><i class="fas fa-exclamation-triangle"></i><div><?= $action_err ?></div></div>
+        <?php endif; ?>
+
         <?php if ($view === 'analytics'): ?>
-            <!-- Analytics View -->
+            <!-- ════════════════════════ ANALYTICS VIEW ════════════════════════ -->
             <div class="glass-panel">
                 <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:0.5rem;">
                     <div>
@@ -718,22 +938,61 @@ if ($view === 'customers') {
                     </div>
                 </div>
 
-                <!-- ── Date Filter ───────────────────────────────────────── -->
+                <!-- ────────── REDESIGNED DATE FILTER ────────── -->
                 <?php
                     $month_names = ['January','February','March','April','May','June',
                                     'July','August','September','October','November','December'];
                     $year_start  = 2020;
                     $year_end    = $current_year;
                     $selected_label = $month_names[$filter_month - 1] . ' ' . $filter_year;
-                ?>
-                <form method="GET" action="dashboard.php" style="margin-top:1.5rem; margin-bottom:0;">
-                    <input type="hidden" name="view" value="analytics">
-                    <div class="analytics-filter-bar">
-                        <span class="filter-label">
-                            <i class="fas fa-calendar-alt"></i> Filter Period:
-                        </span>
 
-                        <!-- Month Selector -->
+                    // Compute "last month" for the preset
+                    $last_month_m = $current_month - 1; $last_month_y = $current_year;
+                    if ($last_month_m < 1) { $last_month_m = 12; $last_month_y--; }
+
+                    // Active-preset detection
+                    $is_this_month  = ($filter_month === $current_month && $filter_year === $current_year);
+                    $is_last_month  = ($filter_month === $last_month_m && $filter_year === $last_month_y);
+                    $is_jan_current = ($filter_month === 1 && $filter_year === $current_year);
+                    $is_jan_prev    = ($filter_month === 1 && $filter_year === $current_year - 1);
+                ?>
+
+                <div class="analytics-filter-card">
+                    <div class="af-header">
+                        <div class="af-title">
+                            <i class="fas fa-calendar-alt"></i> Filter Period
+                        </div>
+                        <span class="af-period-badge-new">
+                            <i class="fas fa-clock"></i><?= $selected_label ?>
+                        </span>
+                    </div>
+
+                    <!-- Quick Presets -->
+                    <div class="af-presets">
+                        <a href="dashboard.php?view=analytics&month=<?= $current_month ?>&year=<?= $current_year ?>"
+                           class="af-preset <?= $is_this_month ? 'active' : '' ?>">
+                            <i class="fas fa-calendar-day"></i> This Month
+                        </a>
+                        <a href="dashboard.php?view=analytics&month=<?= $last_month_m ?>&year=<?= $last_month_y ?>"
+                           class="af-preset <?= $is_last_month ? 'active' : '' ?>">
+                            <i class="fas fa-calendar-minus"></i> Last Month
+                        </a>
+                        <a href="dashboard.php?view=analytics&month=1&year=<?= $current_year ?>"
+                           class="af-preset <?= $is_jan_current ? 'active' : '' ?>">
+                            <i class="fas fa-calendar"></i> January <?= $current_year ?>
+                        </a>
+                        <a href="dashboard.php?view=analytics&month=1&year=<?= $current_year - 1 ?>"
+                           class="af-preset <?= $is_jan_prev ? 'active' : '' ?>">
+                            <i class="fas fa-history"></i> January <?= $current_year - 1 ?>
+                        </a>
+                    </div>
+
+                    <!-- Custom Selection Row -->
+                    <form method="GET" action="dashboard.php" class="af-custom-row">
+                        <input type="hidden" name="view" value="analytics">
+                        <span class="af-custom-label">
+                            <i class="fas fa-sliders-h" style="color:var(--primary);"></i> Custom:
+                        </span>
                         <select name="month" class="af-select" aria-label="Month">
                             <?php for ($m = 1; $m <= 12; $m++): ?>
                                 <option value="<?= $m ?>" <?= $m === $filter_month ? 'selected' : '' ?>>
@@ -741,8 +1000,6 @@ if ($view === 'customers') {
                                 </option>
                             <?php endfor; ?>
                         </select>
-
-                        <!-- Year Selector -->
                         <select name="year" class="af-select" aria-label="Year">
                             <?php for ($y = $year_end; $y >= $year_start; $y--): ?>
                                 <option value="<?= $y ?>" <?= $y === $filter_year ? 'selected' : '' ?>>
@@ -750,23 +1007,17 @@ if ($view === 'customers') {
                                 </option>
                             <?php endfor; ?>
                         </select>
-
                         <button type="submit" class="af-apply-btn">
                             <i class="fas fa-search"></i> Apply
                         </button>
-
                         <?php if (!$is_default_period): ?>
                             <a href="dashboard.php?view=analytics" class="af-reset-link">
                                 <i class="fas fa-times-circle"></i> Reset
                             </a>
                         <?php endif; ?>
+                    </form>
+                </div>
 
-                        <span class="af-period-badge">
-                            <i class="fas fa-clock" style="margin-right:5px;"></i><?= $selected_label ?>
-                        </span>
-                    </div>
-                </form>
-                
                 <!-- Statistics Cards -->
                 <div class="stats-grid" style="margin-top:1.5rem;">
                     <div class="stat-card primary">
@@ -774,31 +1025,26 @@ if ($view === 'customers') {
                         <div class="stat-value"><?= $stats['pending_reservations'] ?></div>
                         <div class="stat-label">Awaiting confirmation</div>
                     </div>
-
                     <div class="stat-card success">
                         <h3>Today's Bookings</h3>
                         <div class="stat-value"><?= $stats['todays_reservations'] ?></div>
                         <div class="stat-label">Confirmed for today</div>
                     </div>
-
                     <div class="stat-card info">
                         <h3><?= $selected_label ?></h3>
                         <div class="stat-value"><?= $stats['this_month_bookings'] ?></div>
                         <div class="stat-label">Total bookings</div>
                     </div>
-
                     <div class="stat-card">
                         <h3>Revenue — <?= $selected_label ?></h3>
                         <div class="stat-value">₱<?= number_format($stats['this_month_revenue'], 0) ?></div>
                         <div class="stat-label">Confirmed revenue</div>
                     </div>
-
                     <div class="stat-card">
                         <h3>Total Customers</h3>
                         <div class="stat-value"><?= $stats['total_customers'] ?></div>
                         <div class="stat-label">Registered users</div>
                     </div>
-
                     <div class="stat-card">
                         <h3>Avg Rating</h3>
                         <div class="stat-value"><?= number_format($stats['avg_rating'], 1) ?> ⭐</div>
@@ -809,9 +1055,46 @@ if ($view === 'customers') {
 
             <!-- Charts -->
             <div class="charts-grid">
-                <!-- Monthly Bookings Trend -->
+                <!-- Monthly Bookings Trend with YEAR NAVIGATION -->
                 <div class="chart-card">
-                    <h2>Monthly Booking Trends (Last 12 Months)</h2>
+                    <div class="chart-card-header">
+                        <h2>Monthly Booking Trends — <?= $trend_year ?></h2>
+                        <?php
+                            $prev_year = $trend_year - 1;
+                            $next_year = $trend_year + 1;
+                            $can_prev  = ($prev_year >= 2020);
+                            $can_next  = ($next_year <= $current_year + 1);
+
+                            // Preserve other analytics params when changing trend year
+                            $extra_qs = '&month=' . $filter_month . '&year=' . $filter_year;
+                        ?>
+                        <div class="trend-year-nav">
+                            <a href="dashboard.php?view=analytics&trend_year=<?= $prev_year . $extra_qs ?>"
+                               class="<?= !$can_prev ? 'disabled' : '' ?>"
+                               title="Previous year">
+                                <i class="fas fa-chevron-left"></i>
+                            </a>
+                            <div class="trend-year-dropdown">
+                                <button type="button" class="trend-year-current" onclick="toggleYearMenu(event)">
+                                    <i class="fas fa-calendar-alt"></i> <?= $trend_year ?>
+                                    <i class="fas fa-caret-down" style="font-size:0.7rem;"></i>
+                                </button>
+                                <div class="trend-year-menu" id="trendYearMenu">
+                                    <?php foreach ($available_trend_years as $yopt): ?>
+                                        <a href="dashboard.php?view=analytics&trend_year=<?= $yopt . $extra_qs ?>"
+                                           class="<?= $yopt === $trend_year ? 'active' : '' ?>">
+                                            <?= $yopt ?>
+                                        </a>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                            <a href="dashboard.php?view=analytics&trend_year=<?= $next_year . $extra_qs ?>"
+                               class="<?= !$can_next ? 'disabled' : '' ?>"
+                               title="Next year">
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                        </div>
+                    </div>
                     <div class="chart-container">
                         <canvas id="monthlyBookingsChart"></canvas>
                     </div>
@@ -829,7 +1112,7 @@ if ($view === 'customers') {
             <!-- Revenue Chart -->
             <div class="glass-panel">
                 <div class="chart-card" style="box-shadow: none; padding: 0;">
-                    <h2>Monthly Revenue Trend</h2>
+                    <h2>Monthly Revenue Trend — <?= $trend_year ?></h2>
                     <div class="chart-container" style="height: 350px;">
                         <canvas id="revenueChart"></canvas>
                     </div>
@@ -838,7 +1121,10 @@ if ($view === 'customers') {
 
             <!-- Branch Performance -->
             <div class="glass-panel">
-                <h2 style="margin-bottom: 1rem;">Branch Performance <span style="font-size:0.75rem;font-weight:500;color:var(--primary);background:rgba(0,119,182,0.1);padding:4px 12px;border-radius:50px;margin-left:10px;vertical-align:middle;"><?= $selected_label ?></span></h2>
+                <h2 style="margin-bottom: 1rem;">
+                    Branch Performance
+                    <span style="font-size:0.75rem;font-weight:500;color:var(--primary);background:rgba(0,119,182,0.1);padding:4px 12px;border-radius:50px;margin-left:10px;vertical-align:middle;"><?= $selected_label ?></span>
+                </h2>
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
@@ -866,7 +1152,6 @@ if ($view === 'customers') {
                             <?php endforeach; ?>
                         </tbody>
                     </table>
-                    
                     <?php if(empty($branch_stats)): ?>
                         <p style="text-align:center; padding: 2rem; color: #888;">No branch data available.</p>
                     <?php endif; ?>
@@ -874,10 +1159,20 @@ if ($view === 'customers') {
             </div>
 
             <script>
+                // Year-menu dropdown for trend chart
+                function toggleYearMenu(e) {
+                    e.stopPropagation();
+                    document.getElementById('trendYearMenu').classList.toggle('open');
+                }
+                document.addEventListener('click', function() {
+                    var m = document.getElementById('trendYearMenu');
+                    if (m) m.classList.remove('open');
+                });
+
                 // Monthly Bookings Chart
                 const monthlyCtx = document.getElementById('monthlyBookingsChart').getContext('2d');
                 const monthlyData = <?= json_encode($monthly_data) ?>;
-                
+
                 new Chart(monthlyCtx, {
                     type: 'line',
                     data: {
@@ -887,22 +1182,17 @@ if ($view === 'customers') {
                             data: monthlyData.map(d => d.total_bookings),
                             borderColor: '#667eea',
                             backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                            borderWidth: 3
+                            tension: 0.4, fill: true, borderWidth: 3
                         }, {
                             label: 'Successful Bookings',
                             data: monthlyData.map(d => d.successful_bookings),
                             borderColor: '#f5576c',
                             backgroundColor: 'rgba(245, 87, 108, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                            borderWidth: 3
+                            tension: 0.4, fill: true, borderWidth: 3
                         }]
                     },
                     options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
+                        responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { position: 'top' } },
                         scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
                     }
@@ -911,7 +1201,7 @@ if ($view === 'customers') {
                 // Reservation Type Chart
                 const typeCtx = document.getElementById('reservationTypeChart').getContext('2d');
                 const typeData = <?= json_encode($reservation_types) ?>;
-                
+
                 new Chart(typeCtx, {
                     type: 'doughnut',
                     data: {
@@ -919,20 +1209,17 @@ if ($view === 'customers') {
                         datasets: [{
                             data: typeData.map(d => d.count),
                             backgroundColor: ['#667eea', '#f5576c', '#4ecdc4'],
-                            borderWidth: 3,
-                            borderColor: '#fff'
+                            borderWidth: 3, borderColor: '#fff'
                         }]
                     },
                     options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
+                        responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { position: 'bottom' } }
                     }
                 });
 
                 // Revenue Chart
                 const revenueCtx = document.getElementById('revenueChart').getContext('2d');
-                
                 new Chart(revenueCtx, {
                     type: 'bar',
                     data: {
@@ -942,22 +1229,16 @@ if ($view === 'customers') {
                             data: monthlyData.map(d => d.revenue),
                             backgroundColor: 'rgba(102, 126, 234, 0.8)',
                             borderColor: '#667eea',
-                            borderWidth: 2,
-                            borderRadius: 8
+                            borderWidth: 2, borderRadius: 8
                         }]
                     },
                     options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
+                        responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
                             y: {
                                 beginAtZero: true,
-                                ticks: {
-                                    callback: function(value) {
-                                        return '₱' + value.toLocaleString();
-                                    }
-                                }
+                                ticks: { callback: function(v) { return '₱' + v.toLocaleString(); } }
                             }
                         }
                     }
@@ -970,7 +1251,6 @@ if ($view === 'customers') {
                 <h1><i class="fas fa-comment-dots" style="color:var(--secondary);margin-right:10px;"></i><?= $pageTitle ?></h1>
                 <p style="color:#7f8c8d;margin-bottom:1.8rem;">Customer satisfaction & reviews across all branches</p>
 
-                <!-- Summary Cards -->
                 <div class="feedback-summary">
                     <div class="fb-stat">
                         <div class="fb-icon blue"><i class="fas fa-comments"></i></div>
@@ -1002,7 +1282,6 @@ if ($view === 'customers') {
                     </div>
                 </div>
 
-                <!-- Rating Filter Bar -->
                 <div class="filter-bar" style="margin-bottom:1.5rem;">
                     <span><i class="fas fa-star"></i> Filter by Rating:</span>
                     <?php
@@ -1017,7 +1296,6 @@ if ($view === 'customers') {
                 </div>
             </div>
 
-            <!-- Feedback Cards Grid -->
             <?php if (!empty($feedback_data)): ?>
             <div class="feedback-grid">
                 <?php foreach ($feedback_data as $fb):
@@ -1028,7 +1306,7 @@ if ($view === 'customers') {
                     $badge_cls  = 'r' . $stars;
                     $name       = htmlspecialchars($fb['full_name'] ?? 'Anonymous');
                     $initial    = strtoupper(substr($name, 0, 1));
-                    $comment    = htmlspecialchars($fb['comment'] ?? '');
+                    $comment    = htmlspecialchars($fb['comments'] ?? '');
                     $branch     = htmlspecialchars($fb['branch_name'] ?? 'N/A');
                     $date       = $fb['feedback_date'] ? date('M d, Y', strtotime($fb['feedback_date'])) : '—';
                     $card_color = $stars >= 4 ? 'var(--primary)' : ($stars === 3 ? '#f39c12' : '#ef476f');
@@ -1062,7 +1340,6 @@ if ($view === 'customers') {
             </div>
             <?php endif; ?>
 
-            <!-- Feedback Pagination -->
             <?php if ($fb_pages > 1):
                 $fb_sp = ($filter_rating !== 'All') ? '&rating=' . urlencode($filter_rating) : '';
             ?>
@@ -1090,10 +1367,37 @@ if ($view === 'customers') {
             <?php endif; ?>
 
         <?php elseif ($view === 'customers'): ?>
-            <!-- Customers View -->
+            <!-- ══════════════════════ CUSTOMERS VIEW ══════════════════════ -->
             <div class="glass-panel">
                 <h1><?= $pageTitle ?></h1>
-                
+
+                <div class="customers-toolbar">
+                    <form method="GET" action="dashboard.php" style="margin:0;">
+                        <input type="hidden" name="view" value="customers">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" name="q" placeholder="Search by name, email or contact…"
+                                   value="<?= htmlspecialchars($cust_search) ?>">
+                            <button type="submit">Search</button>
+                            <?php if ($cust_search !== ''): ?>
+                                <a href="dashboard.php?view=customers" class="search-clear" title="Clear search">
+                                    <i class="fas fa-times"></i>
+                                </a>
+                            <?php endif; ?>
+                        </div>
+                    </form>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="font-size:0.85rem;color:#777;">
+                            <strong style="color:var(--primary-dark);"><?= $cust_total ?></strong>
+                            customer<?= $cust_total !== 1 ? 's' : '' ?>
+                        </span>
+                        <a href="export_customers.php<?= $cust_search !== '' ? '?q=' . urlencode($cust_search) : '' ?>"
+                           class="export-btn" title="Download CSV">
+                            <i class="fas fa-file-export"></i> Export CSV
+                        </a>
+                    </div>
+                </div>
+
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
@@ -1103,6 +1407,7 @@ if ($view === 'customers') {
                                 <th>Email</th>
                                 <th>Contact</th>
                                 <th>Address</th>
+                                <th>Registered</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1112,7 +1417,7 @@ if ($view === 'customers') {
                                 <td>
                                     <div style="display:flex; align-items:center; gap:10px;">
                                         <div style="width:30px; height:30px; background:var(--secondary); border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-size:0.8rem;">
-                                            <?= substr($row['full_name'], 0, 1) ?>
+                                            <?= strtoupper(substr($row['full_name'], 0, 1)) ?>
                                         </div>
                                         <?= htmlspecialchars($row['full_name']) ?>
                                     </div>
@@ -1120,121 +1425,344 @@ if ($view === 'customers') {
                                 <td><?= htmlspecialchars($row['email']) ?></td>
                                 <td><?= htmlspecialchars($row['contact_number']) ?></td>
                                 <td><?= htmlspecialchars($row['address'] ?? 'N/A') ?></td>
+                                <td style="color:#888;font-size:0.85rem;">
+                                    <?= !empty($row['created_at']) ? date('M d, Y', strtotime($row['created_at'])) : '—' ?>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
-                    
+
                     <?php if(empty($data)): ?>
-                        <p style="text-align:center; padding: 2rem; color: #888;">No customers found.</p>
+                        <p style="text-align:center; padding: 2rem; color: #888;">
+                            <?= $cust_search !== '' ? 'No customers match your search.' : 'No customers found.' ?>
+                        </p>
                     <?php endif; ?>
+                </div>
+
+                <!-- Customer Pagination -->
+                <?php if ($cust_pages > 1):
+                    $cs_sp = ($cust_search !== '') ? '&q=' . urlencode($cust_search) : '';
+                ?>
+                <div class="pagination">
+                    <a href="dashboard.php?view=customers&page=<?= $cust_page - 1 . $cs_sp ?>" class="page-btn <?= $cust_page <= 1 ? 'disabled' : '' ?>">
+                        <i class="fas fa-chevron-left"></i>
+                    </a>
+                    <?php
+                    $cwin = 2; $cs2 = max(1, $cust_page - $cwin); $ce2 = min($cust_pages, $cust_page + $cwin);
+                    if ($cs2 > 1): ?><a href="dashboard.php?view=customers&page=1<?= $cs_sp ?>" class="page-btn">1</a><?php
+                        if ($cs2 > 2): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif;
+                    endif;
+                    for ($p = $cs2; $p <= $ce2; $p++): ?>
+                        <a href="dashboard.php?view=customers&page=<?= $p . $cs_sp ?>" class="page-btn <?= $p === $cust_page ? 'active' : '' ?>"><?= $p ?></a>
+                    <?php endfor;
+                    if ($ce2 < $cust_pages):
+                        if ($ce2 < $cust_pages - 1): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif; ?>
+                        <a href="dashboard.php?view=customers&page=<?= $cust_pages . $cs_sp ?>" class="page-btn"><?= $cust_pages ?></a>
+                    <?php endif; ?>
+                    <a href="dashboard.php?view=customers&page=<?= $cust_page + 1 . $cs_sp ?>" class="page-btn <?= $cust_page >= $cust_pages ? 'disabled' : '' ?>">
+                        <i class="fas fa-chevron-right"></i>
+                    </a>
+                    <span class="page-info">Page <?= $cust_page ?> of <?= $cust_pages ?></span>
+                </div>
+                <?php endif; ?>
+            </div>
+
+        <?php elseif ($view === 'admins'): ?>
+            <!-- ══════════════════════ ADMIN MANAGEMENT VIEW ══════════════════════ -->
+            <div class="glass-panel">
+                <h1><i class="fas fa-user-shield" style="color:var(--secondary);margin-right:10px;"></i><?= $pageTitle ?></h1>
+                <p style="color:#7f8c8d;margin-bottom:1.5rem;">
+                    Manage administrator accounts.
+                    <?php if ($is_super_admin): ?>
+                        You are signed in as the <strong style="color:#b06d00;">Main Administrator</strong> and can add or remove admins.
+                    <?php else: ?>
+                        You can add new admins and change your own password. Only the Main Administrator can remove accounts.
+                    <?php endif; ?>
+                </p>
+
+                <div class="admin-toolbar">
+                    <span style="font-size:0.85rem;color:#777;">
+                        <strong style="color:var(--primary-dark);"><?= count($admins) ?></strong>
+                        admin account<?= count($admins) !== 1 ? 's' : '' ?>
+                    </span>
+                    <div class="toolbar-actions">
+                        <button type="button" class="btn-action btn-secondary" onclick="openModal('changePwModal')">
+                            <i></i> Change My Password
+                        </button>
+                        <button type="button" class="btn-action" onclick="openModal('addAdminModal')">
+                            <i></i> Add Admin
+                        </button>
+                    </div>
+                </div>
+
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Email (Username)</th>
+                                <th>Role</th>
+                                <th>Created</th>
+                                <th>Created By</th>
+                                <th style="text-align:right;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($admins as $a):
+                                $is_self  = ((int)$a['user_id'] === (int)$current_user_id);
+                                $is_super = (int)$a['is_super_admin'] === 1;
+                                $initial  = strtoupper(substr($a['full_name'], 0, 1));
+                            ?>
+                            <tr>
+                                <td>#<?= $a['admin_id'] ?></td>
+                                <td>
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:32px; height:32px; background:<?= $is_super ? 'linear-gradient(135deg,#f6d365,#fda085)' : 'var(--primary)' ?>; border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-size:0.85rem; font-weight:700;">
+                                            <?= htmlspecialchars($initial) ?>
+                                        </div>
+                                        <div>
+                                            <div style="font-weight:600;"><?= htmlspecialchars($a['full_name']) ?>
+                                                <?php if ($is_self): ?>
+                                                    <span style="font-size:0.7rem;color:#888;font-weight:500;">(you)</span>
+                                                <?php endif; ?>
+                                            </div>
+                                            <?php if (!empty($a['must_change_password']) && !$is_super): ?>
+                                                <span class="badge-pill badge-warn" style="margin-top:3px;">
+                                                    <i class="fas fa-exclamation-circle"></i> Default password
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td><?= htmlspecialchars($a['username']) ?></td>
+                                <td>
+                                    <?php if ($is_super): ?>
+                                        <span class="badge-pill badge-super"></i> Main Admin</span>
+                                    <?php else: ?>
+                                        <span class="badge-pill badge-admin"></i> Admin</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td style="color:#888;font-size:0.85rem;">
+                                    <?= date('M d, Y', strtotime($a['created_at'])) ?>
+                                </td>
+                                <td style="color:#888;font-size:0.85rem;">
+                                    <?= htmlspecialchars($a['created_by_name'] ?? '—') ?>
+                                </td>
+                                <td style="text-align:right;">
+                                    <?php if ($is_super_admin && !$is_super && !$is_self): ?>
+                                        <form method="POST" action="dashboard.php?view=admins" style="display:inline;"
+                                              onsubmit="return confirm('Permanently delete admin \'<?= htmlspecialchars(addslashes($a['full_name'])) ?>\'? This cannot be undone.');">
+                                            <input type="hidden" name="action" value="delete_admin">
+                                            <input type="hidden" name="admin_id" value="<?= $a['admin_id'] ?>">
+                                            <button type="submit" class="btn-action btn-reject">
+                                                <i class="fas fa-trash"></i> Delete
+                                            </button>
+                                        </form>
+                                    <?php elseif ($is_super): ?>
+                                        <span style="color:#aaa;font-size:0.82rem;font-style:italic;">Protected</span>
+                                    <?php elseif ($is_self): ?>
+                                        <span style="color:#aaa;font-size:0.82rem;font-style:italic;">—</span>
+                                    <?php else: ?>
+                                        <span style="color:#aaa;font-size:0.82rem;font-style:italic;" title="Only the Main Administrator can delete admins">
+                                            <i class="fas fa-lock"></i> Restricted
+                                        </span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
-<?php else: ?>
-<div class="glass-panel">
-    <h1><?= $pageTitle ?></h1>
+            <!-- Add Admin Modal -->
+            <div class="modal-overlay" id="addAdminModal" onclick="if(event.target===this)closeModal('addAdminModal')">
+                <div class="modal">
+                    <h2><i class="fas fa-user-plus"></i> Add New Admin</h2>
+                    <p class="modal-subtitle">Create a new administrator account.</p>
 
-    <!-- Filter Buttons -->
-    <?php
-        $statuses = ['All','Pending','Confirmed','Completed','Cancelled'];
-        $filter_classes = ['All'=>'','Pending'=>'f-pending','Confirmed'=>'f-confirmed','Completed'=>'f-completed','Cancelled'=>'f-cancelled'];
-    ?>
-    <div class="filter-bar">
-        <span><i class="fas fa-filter"></i> Filter:</span>
-<?php foreach ($statuses as $s):
-            $is_active = ($filter_status === $s);
-            $url = 'dashboard.php' . ($s !== 'All' ? '?status=' . urlencode($s) : '');
-            
-            // NEW: Apply the same exclusion rule to the filter counts
-            $cnt = null;
-            if ($s !== 'All') {
-                $cnt = $pdo->query("SELECT COUNT(*) FROM reservations r WHERE r.status = " . $pdo->quote($s) . " AND NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')")->fetchColumn();
-            }
-        ?>
-            <a href="<?= $url ?>" class="filter-btn <?= $filter_classes[$s] ?> <?= $is_active ? 'active' : '' ?>">
-                <?= $s ?><?php if($cnt !== null) echo " <span style='opacity:0.7;'>($cnt)</span>"; ?>
-            </a>
-        <?php endforeach; ?>
-        <span style="font-size:0.82rem;color:#999;margin-left:4px;"><?= $total_rows ?> record<?= $total_rows != 1 ? 's' : '' ?></span>
-    </div>
+                    <div class="modal-info">
+                        <i class="fas fa-info-circle" style="color:var(--primary);margin-right:6px;"></i>
+                        The new admin's default password will be <strong>ChangeMe@123</strong>.
+                        They can update it from this page after first login.
+                    </div>
 
-    <div style="overflow-x: auto;">
-        <table>
-            <thead>
-                <tr><th>ID</th><th>Guest</th><th>Branch</th><th>Check-in</th><th>Status</th><th>Action</th></tr>
-            </thead>
-            <tbody>
-                <?php foreach($data as $row): ?>
-                <tr>
-                    <td><span style="font-weight:bold; color:var(--primary);">#<?= $row['reservation_id'] ?></span></td>
-                    <td><?= htmlspecialchars($row['full_name']) ?></td>
-                    <td><?= htmlspecialchars($row['branch_name']) ?></td>
-                    <td><?= date('M d, Y', strtotime($row['reservation_date'])) ?></td>
-                    <td>
-                        <?php $sc = match($row['status']) {
-                            'Confirmed'=>'confirmed','Pending'=>'pending',
-                            'Completed'=>'completed','Cancelled'=>'cancelled',default=>'cancelled'}; ?>
-                        <span class="status <?= $sc ?>"><?= $row['status'] ?></span>
-                    </td>
-                    <td>
-                        <?php if($row['status'] === 'Pending'): ?>
-                            <div class="action-buttons">
-                                <a href="?approve=<?= $row['reservation_id'] ?>" class="btn-action"
-                                   onclick="return confirm('Approve reservation #<?= $row['reservation_id'] ?>?')">
-                                    <i class="fas fa-check"></i> Approve
-                                </a>
-                                <a href="?reject=<?= $row['reservation_id'] ?>" class="btn-action btn-reject"
-                                   onclick="return confirm('Reject reservation #<?= $row['reservation_id'] ?>?')">
-                                    <i class="fas fa-times"></i> Reject
-                                </a>
-                            </div>
-                        <?php elseif($row['status'] === 'Confirmed'): ?>
-                            <span style="color:#2ecc71;font-size:0.9rem;"><i class="fas fa-check-circle"></i> Confirmed</span>
-                        <?php elseif($row['status'] === 'Completed'): ?>
-                            <span style="color:#3498db;font-size:0.9rem;"><i class="fas fa-flag-checkered"></i> Completed</span>
-                        <?php else: ?>
-                            <span style="color:#e74c3c;font-size:0.9rem;"><i class="fas fa-times-circle"></i> Cancelled</span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <?php if(empty($data)): ?>
-            <p style="text-align:center; padding: 2rem; color: #888;">No reservations found.</p>
+                    <form method="POST" action="dashboard.php?view=admins">
+                        <input type="hidden" name="action" value="add_admin">
+                        <div class="form-group">
+                            <label for="add_full_name">Full Name</label>
+                            <input type="text" id="add_full_name" name="full_name" required maxlength="100"
+                                   placeholder="e.g. Juan Dela Cruz">
+                        </div>
+                        <div class="form-group">
+                            <label for="add_email">Email (Username)</label>
+                            <input type="email" id="add_email" name="email" required maxlength="100"
+                                   placeholder="e.g. juan.delacruz@checkmates.local">
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('addAdminModal')">Cancel</button>
+                            <button type="submit" class="btn-submit">
+                                <i></i>Create Admin
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Change Password Modal -->
+            <div class="modal-overlay" id="changePwModal" onclick="if(event.target===this)closeModal('changePwModal')">
+                <div class="modal">
+                    <h2><i class="fas fa-key"></i> Change My Password</h2>
+                    <p class="modal-subtitle">Update the password for <strong><?= htmlspecialchars($current_admin['username']) ?></strong>.</p>
+
+                    <form method="POST" action="dashboard.php?view=admins">
+                        <input type="hidden" name="action" value="change_password">
+                        <div class="form-group">
+                            <label for="cp_current">Current Password</label>
+                            <input type="password" id="cp_current" name="current_password" required autocomplete="current-password">
+                        </div>
+                        <div class="form-group">
+                            <label for="cp_new">New Password</label>
+                            <input type="password" id="cp_new" name="new_password" required minlength="8" autocomplete="new-password">
+                        </div>
+                        <div class="form-group">
+                            <label for="cp_confirm">Confirm New Password</label>
+                            <input type="password" id="cp_confirm" name="confirm_password" required minlength="8" autocomplete="new-password">
+                        </div>
+                        <div class="modal-info" style="margin-top:0.6rem;">
+                            <i style="color:var(--primary);margin-right:0px;"></i>
+                        Use at least 8 characters. Mix letters, numbers and symbols for stronger security.
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('changePwModal')">Cancel</button>
+                            <button type="submit" class="btn-submit">
+                                <i></i>Update Password
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <script>
+                function openModal(id) {
+                    document.getElementById(id).classList.add('open');
+                    document.body.style.overflow = 'hidden';
+                }
+                function closeModal(id) {
+                    document.getElementById(id).classList.remove('open');
+                    document.body.style.overflow = '';
+                }
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+                        document.body.style.overflow = '';
+                    }
+                });
+            </script>
+
+        <?php else: ?>
+            <!-- ══════════════════════ RESERVATIONS VIEW ══════════════════════ -->
+            <div class="glass-panel">
+                <h1><?= $pageTitle ?></h1>
+
+                <?php
+                    $statuses = ['All','Pending','Confirmed','Completed','Cancelled'];
+                    $filter_classes = ['All'=>'','Pending'=>'f-pending','Confirmed'=>'f-confirmed','Completed'=>'f-completed','Cancelled'=>'f-cancelled'];
+                ?>
+                <div class="filter-bar">
+                    <span><i class="fas fa-filter"></i> Filter:</span>
+                    <?php foreach ($statuses as $s):
+                        $is_active = ($filter_status === $s);
+                        $url = 'dashboard.php' . ($s !== 'All' ? '?status=' . urlencode($s) : '');
+                        $cnt = null;
+                        if ($s !== 'All') {
+                            $cnt = $pdo->query("SELECT COUNT(*) FROM reservations r WHERE r.status = " . $pdo->quote($s) . " AND NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')")->fetchColumn();
+                        }
+                    ?>
+                        <a href="<?= $url ?>" class="filter-btn <?= $filter_classes[$s] ?> <?= $is_active ? 'active' : '' ?>">
+                            <?= $s ?><?php if($cnt !== null) echo " <span style='opacity:0.7;'>($cnt)</span>"; ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <span style="font-size:0.82rem;color:#999;margin-left:4px;"><?= $total_rows ?> record<?= $total_rows != 1 ? 's' : '' ?></span>
+                </div>
+
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr><th>ID</th><th>Guest</th><th>Branch</th><th>Check-in</th><th>Status</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach($data as $row): ?>
+                            <tr>
+                                <td><span style="font-weight:bold; color:var(--primary);">#<?= $row['reservation_id'] ?></span></td>
+                                <td><?= htmlspecialchars($row['full_name']) ?></td>
+                                <td><?= htmlspecialchars($row['branch_name']) ?></td>
+                                <td><?= date('M d, Y', strtotime($row['reservation_date'])) ?></td>
+                                <td>
+                                    <?php $sc = match($row['status']) {
+                                        'Confirmed'=>'confirmed','Pending'=>'pending',
+                                        'Completed'=>'completed','Cancelled'=>'cancelled',default=>'cancelled'}; ?>
+                                    <span class="status <?= $sc ?>"><?= $row['status'] ?></span>
+                                </td>
+                                <td>
+                                    <?php if($row['status'] === 'Pending'): ?>
+                                        <div class="action-buttons">
+                                            <a href="?approve=<?= $row['reservation_id'] ?>" class="btn-action"
+                                               onclick="return confirm('Approve reservation #<?= $row['reservation_id'] ?>?')">
+                                                <i class="fas fa-check"></i> Approve
+                                            </a>
+                                            <a href="?reject=<?= $row['reservation_id'] ?>" class="btn-action btn-reject"
+                                               onclick="return confirm('Reject reservation #<?= $row['reservation_id'] ?>?')">
+                                                <i class="fas fa-times"></i> Reject
+                                            </a>
+                                        </div>
+                                    <?php elseif($row['status'] === 'Confirmed'): ?>
+                                        <span style="color:#2ecc71;font-size:0.9rem;"><i class="fas fa-check-circle"></i> Confirmed</span>
+                                    <?php elseif($row['status'] === 'Completed'): ?>
+                                        <span style="color:#3498db;font-size:0.9rem;"><i class="fas fa-flag-checkered"></i> Completed</span>
+                                    <?php else: ?>
+                                        <span style="color:#e74c3c;font-size:0.9rem;"><i class="fas fa-times-circle"></i> Cancelled</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <?php if(empty($data)): ?>
+                        <p style="text-align:center; padding: 2rem; color: #888;">No reservations found.</p>
+                    <?php endif; ?>
+                </div>
+
+                <?php if ($total_pages > 1):
+                    $sp = ($filter_status !== 'All') ? '&status=' . urlencode($filter_status) : '';
+                ?>
+                <div class="pagination">
+                    <a href="dashboard.php?page=<?= $current_page-1 . $sp ?>" class="page-btn <?= $current_page<=1?'disabled':'' ?>">
+                        <i class="fas fa-chevron-left"></i>
+                    </a>
+                    <?php
+                    $win=2; $s2=max(1,$current_page-$win); $e2=min($total_pages,$current_page+$win);
+                    if($s2>1): ?><a href="dashboard.php?page=1<?= $sp ?>" class="page-btn">1</a><?php
+                        if($s2>2): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif;
+                    endif;
+                    for($p=$s2;$p<=$e2;$p++): ?>
+                        <a href="dashboard.php?page=<?= $p.$sp ?>" class="page-btn <?= $p===$current_page?'active':'' ?>"><?= $p ?></a>
+                    <?php endfor;
+                    if($e2<$total_pages):
+                        if($e2<$total_pages-1): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif; ?>
+                        <a href="dashboard.php?page=<?= $total_pages.$sp ?>" class="page-btn"><?= $total_pages ?></a>
+                    <?php endif; ?>
+                    <a href="dashboard.php?page=<?= $current_page+1 . $sp ?>" class="page-btn <?= $current_page>=$total_pages?'disabled':'' ?>">
+                        <i class="fas fa-chevron-right"></i>
+                    </a>
+                    <span class="page-info">Page <?= $current_page ?> of <?= $total_pages ?></span>
+                </div>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
-    </div>
 
-    <!-- Pagination -->
-    <?php if ($total_pages > 1):
-        $sp = ($filter_status !== 'All') ? '&status=' . urlencode($filter_status) : '';
-    ?>
-    <div class="pagination">
-        <a href="dashboard.php?page=<?= $current_page-1 . $sp ?>" class="page-btn <?= $current_page<=1?'disabled':'' ?>">
-            <i class="fas fa-chevron-left"></i>
-        </a>
-        <?php
-        $win=2; $s2=max(1,$current_page-$win); $e2=min($total_pages,$current_page+$win);
-        if($s2>1): ?><a href="dashboard.php?page=1<?= $sp ?>" class="page-btn">1</a><?php
-            if($s2>2): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif;
-        endif;
-        for($p=$s2;$p<=$e2;$p++): ?>
-            <a href="dashboard.php?page=<?= $p.$sp ?>" class="page-btn <?= $p===$current_page?'active':'' ?>"><?= $p ?></a>
-        <?php endfor;
-        if($e2<$total_pages):
-            if($e2<$total_pages-1): ?><span style="padding:8px 4px;color:#aaa;">…</span><?php endif; ?>
-            <a href="dashboard.php?page=<?= $total_pages.$sp ?>" class="page-btn"><?= $total_pages ?></a>
-        <?php endif; ?>
-        <a href="dashboard.php?page=<?= $current_page+1 . $sp ?>" class="page-btn <?= $current_page>=$total_pages?'disabled':'' ?>">
-            <i class="fas fa-chevron-right"></i>
-        </a>
-        <span class="page-info">Page <?= $current_page ?> of <?= $total_pages ?></span>
-    </div>
-    <?php endif; ?>
-
-</div>
-<?php endif; ?>
     </div>
 
 </body>
