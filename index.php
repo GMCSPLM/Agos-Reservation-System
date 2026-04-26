@@ -70,18 +70,42 @@ setTimeout(() => {
     }
 }
 
-$branches = $pdo->query("SELECT * FROM branches")->fetchAll();
+// Pull every branch with its current status & primary image (single query
+// via the v_branches_full view added by the Branches Management migration).
+$branches = $pdo->query("SELECT * FROM v_branches_full ORDER BY branch_name")->fetchAll();
 $amenities = $pdo->query("SELECT a.*, b.branch_name FROM amenities a JOIN branches b ON a.branch_id = b.branch_id")->fetchAll();
 $feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 9")->fetchAll();
+
+// Global maintenance flag (1 = ALL branches under maintenance, no bookings allowed)
+$globalMaintenance = (int)$pdo->query("
+    SELECT setting_value FROM system_settings
+    WHERE  setting_key = 'all_branches_maintenance'
+    LIMIT 1
+")->fetchColumn();
+
+// Branches that can actually accept bookings RIGHT NOW (used by the calendar
+// branch picker so customers can never select an unbookable branch).
+$bookableBranches = array_values(array_filter($branches, function($b) use ($globalMaintenance) {
+    return $globalMaintenance !== 1 && (int)$b['is_available'] === 1;
+}));
 
 // Calendar Variables
 $selectedMonth = $_GET['month'] ?? date('m');
 $selectedYear = $_GET['year'] ?? date('Y');
-// Default to the first branch instead of 'all' — the "All Branches" option has been removed
-$firstBranch    = $branches[0]['branch_id'] ?? null;
+// Default to the first BOOKABLE branch instead of 'all' — the "All Branches" option has been removed
+$firstBranch    = $bookableBranches[0]['branch_id'] ?? ($branches[0]['branch_id'] ?? null);
 $selectedBranch = $_GET['branch'] ?? $firstBranch;
 // Reject 'all' in case it arrives via a stale URL
 if ($selectedBranch === 'all') $selectedBranch = $firstBranch;
+
+// If the requested branch is not bookable, fall back to the first bookable one
+$selectedIsBookable = false;
+foreach ($bookableBranches as $bb) {
+    if ((int)$bb['branch_id'] === (int)$selectedBranch) { $selectedIsBookable = true; break; }
+}
+if (!$selectedIsBookable && !empty($bookableBranches)) {
+    $selectedBranch = $bookableBranches[0]['branch_id'];
+}
 
 // Validate inputs
 $selectedMonth = max(1, min(12, intval($selectedMonth)));
@@ -98,22 +122,25 @@ $firstDayOfWeek = date('N', strtotime("$selectedYear-$selectedMonth-01"));
 
 // For the selected branch: fetch which reservation_type slots are taken on each date.
 // GROUP BY (date, reservation_type) so one record = one booked slot, not one record per guest.
-$stmt = $pdo->prepare("
-    SELECT reservation_date, reservation_type
-    FROM   reservations
-    WHERE  branch_id = ?
-      AND  MONTH(reservation_date) = ?
-      AND  YEAR(reservation_date)  = ?
-      AND  status IN ('Confirmed', 'Pending')
-    GROUP BY reservation_date, reservation_type
-");
-$stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
-
-// $slotsByDate['2025-06-15']['Day']       = true  → Day slot is taken
-// $slotsByDate['2025-06-15']['Overnight'] = true  → Overnight slot is taken
+// Skip the lookup entirely when no branch is selectable (avoids a query with branch_id = NULL).
 $slotsByDate = [];
-foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $slotsByDate[$row['reservation_date']][$row['reservation_type']] = true;
+if (!empty($selectedBranch)) {
+    $stmt = $pdo->prepare("
+        SELECT reservation_date, reservation_type
+        FROM   reservations
+        WHERE  branch_id = ?
+          AND  MONTH(reservation_date) = ?
+          AND  YEAR(reservation_date)  = ?
+          AND  status IN ('Confirmed', 'Pending')
+        GROUP BY reservation_date, reservation_type
+    ");
+    $stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
+
+    // $slotsByDate['2025-06-15']['Day']       = true  → Day slot is taken
+    // $slotsByDate['2025-06-15']['Overnight'] = true  → Overnight slot is taken
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $slotsByDate[$row['reservation_date']][$row['reservation_type']] = true;
+    }
 }
 
 // Calculate previous and next month
@@ -755,18 +782,53 @@ if ($nextMonth > 12) {
 </header>
 
 <section class="container" style="padding-top: 4rem;">
-    <h2 class="section-title">Our Resorts</h2>
+    <h2 class="section-title">Branches</h2>
+
+    <?php if ($globalMaintenance === 1): ?>
+        <div style="max-width:1100px;margin:0 auto 1.5rem;background:linear-gradient(135deg,#fff3cd 0%,#ffe8a3 100%);border-left:5px solid #f39c12;padding:14px 22px;border-radius:12px;box-shadow:0 4px 16px rgba(243,156,18,0.15);display:flex;align-items:center;gap:14px;">
+            <i class="fas fa-tools" style="font-size:1.5rem;color:#b06d00;flex-shrink:0;"></i>
+            <div>
+                <strong style="display:block;color:#6b3e00;">All branches are temporarily under maintenance.</strong>
+                <span style="color:#8a5a00;font-size:0.9rem;">Online bookings are paused. Please check back soon.</span>
+            </div>
+        </div>
+    <?php endif; ?>
+
     <div class="grid">
-        <?php foreach($branches as $b): ?>
-            <div class="card">
-                <img src="<?= htmlspecialchars($b['image_url']) ?>" alt="Resort Image">
+        <?php foreach($branches as $b):
+            $bAvail    = (int)$b['is_available'] === 1;
+            $bBookable = $bAvail && $globalMaintenance !== 1;
+
+            if ($globalMaintenance === 1) {
+                $statusBg='#f39c12'; $statusTxt='Under Maintenance';
+            } elseif ($bAvail) {
+                $statusBg='#28a745'; $statusTxt='Available';
+            } else {
+                $statusBg='#e74c3c'; $statusTxt='Unavailable';
+            }
+        ?>
+            <div class="card" style="position:relative;<?= $bBookable ? '' : 'opacity:0.92;' ?>">
+                <div style="position:relative;">
+                    <img src="<?= htmlspecialchars($b['image_url']) ?>" alt="Resort Image"
+                         onerror="this.src='assets/default.jpg'"
+                         style="<?= $bBookable ? '' : 'filter:grayscale(55%) brightness(0.9);' ?>">
+                    <span style="position:absolute;top:10px;right:10px;background:<?= $statusBg ?>;color:#fff;padding:5px 12px;border-radius:50px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;box-shadow:0 3px 10px rgba(0,0,0,0.15);">
+                        <?= $statusTxt ?>
+                    </span>
+                </div>
                 <div class="card-content">
                     <h3><?= htmlspecialchars($b['branch_name']) ?></h3>
                     <p style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
                         <i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($b['location']) ?>
                     </p>
                     <p><?= htmlspecialchars($b['opening_hours'] ?? 'Always Open') ?></p>
-                    <a href="book.php?branch=<?= $b['branch_id'] ?>" style="display:block; text-align:center; margin-top:15px; color:var(--primary); font-weight:bold;">Book Here &rarr;</a>
+                    <?php if ($bBookable): ?>
+                        <a href="book.php?branch=<?= $b['branch_id'] ?>" style="display:block; text-align:center; margin-top:15px; color:var(--primary); font-weight:bold;">Book Here &rarr;</a>
+                    <?php else: ?>
+                        <span style="display:block;text-align:center;margin-top:15px;color:#999;font-weight:bold;cursor:not-allowed;">
+                            <i class="fas fa-lock"></i> Booking Unavailable
+                        </span>
+                    <?php endif; ?>
                 </div>
             </div>
         <?php endforeach; ?>
@@ -894,7 +956,23 @@ if ($nextMonth > 12) {
 <!-- NEW IMPROVED CALENDAR -->
 <section class="container" style="padding-top: 4rem; padding-bottom: 4rem;">
     <h2 class="section-title">Availability Calendar</h2>
-    
+
+    <?php if ($globalMaintenance === 1 || empty($bookableBranches)): ?>
+        <div style="max-width:1100px;margin:0 auto 1.5rem;background:linear-gradient(135deg,#fff3cd 0%,#ffe8a3 100%);border-left:5px solid #f39c12;padding:14px 22px;border-radius:12px;box-shadow:0 4px 16px rgba(243,156,18,0.15);display:flex;align-items:center;gap:14px;">
+            <i class="fas <?= $globalMaintenance === 1 ? 'fa-tools' : 'fa-info-circle' ?>" style="font-size:1.5rem;color:#b06d00;flex-shrink:0;"></i>
+            <div>
+                <strong style="display:block;color:#6b3e00;">
+                    <?= $globalMaintenance === 1
+                        ? 'All branches are temporarily under maintenance.'
+                        : 'No branches are currently accepting bookings.' ?>
+                </strong>
+                <span style="color:#8a5a00;font-size:0.9rem;">
+                    The calendar is shown for reference only &mdash; new bookings are paused.
+                </span>
+            </div>
+        </div>
+    <?php endif; ?>
+
 <!-- Calendar Controls -->
 <div class="calendar-controls">
     <div class="calendar-nav">
@@ -923,13 +1001,19 @@ if ($nextMonth > 12) {
             <label for="branchSelect">
                 <i class="fas fa-building"></i> Select Branch:
             </label>
+            <?php if (!empty($bookableBranches)): ?>
             <select id="branchSelect" class="branch-select" onchange="changeBranch(this.value)">
-                <?php foreach($branches as $b): ?>
+                <?php foreach($bookableBranches as $b): ?>
                     <option value="<?= $b['branch_id'] ?>" <?= $selectedBranch == $b['branch_id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($b['branch_name']) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
+            <?php else: ?>
+            <span style="color:#888;font-style:italic;">
+                <i class="fas fa-info-circle"></i> No branches available for booking right now
+            </span>
+            <?php endif; ?>
         </div>
     </div>
     
@@ -952,6 +1036,7 @@ if ($nextMonth > 12) {
             }
 
             // Days of the month
+            $bookingsBlocked = ($globalMaintenance === 1 || empty($bookableBranches) || empty($selectedBranch));
             for ($day = 1; $day <= $daysInMonth; $day++) {
                 $dateStr     = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
                 $isPast      = strtotime($dateStr) < strtotime(date('Y-m-d'));
@@ -981,6 +1066,12 @@ if ($nextMonth > 12) {
                             $class      = "day-available";
                             $statusText = "Available";
                             $isClickable = true;
+                        }
+
+                        // If bookings are globally blocked (maintenance / no bookable branch),
+                        // make every future day non-clickable.
+                        if ($bookingsBlocked) {
+                            $isClickable = false;
                         }
 
                         // Slot pills: show Day and Overnight status as mini-badges
@@ -1025,16 +1116,23 @@ if ($nextMonth > 12) {
         
         <?php
             $branchName = '';
-            foreach($branches as $b) {
-                if ($b['branch_id'] == $selectedBranch) {
-                    $branchName = $b['branch_name'];
-                    break;
+            if (!empty($selectedBranch)) {
+                foreach($branches as $b) {
+                    if ($b['branch_id'] == $selectedBranch) {
+                        $branchName = $b['branch_name'];
+                        break;
+                    }
                 }
             }
         ?>
         <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
-            <i class="fas fa-info-circle"></i> Showing slot availability for <strong><?= htmlspecialchars($branchName) ?></strong>.
-            Each date has a <strong>Day Tour</strong> and an <strong>Overnight</strong> slot — booking one leaves the other open.
+            <i class="fas fa-info-circle"></i>
+            <?php if ($branchName !== ''): ?>
+                Showing slot availability for <strong><?= htmlspecialchars($branchName) ?></strong>.
+                Each date has a <strong>Day Tour</strong> and an <strong>Overnight</strong> slot &mdash; booking one leaves the other open.
+            <?php else: ?>
+                There are no branches available for booking right now.
+            <?php endif; ?>
         </p>
     </div>
 </section>

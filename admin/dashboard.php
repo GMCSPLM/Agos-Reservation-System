@@ -174,6 +174,197 @@ if ($is_post && ($_POST['action'] ?? '') === 'change_password') {
 }
 
 // =========================================================================
+// BRANCHES MANAGEMENT — POST handlers
+// =========================================================================
+// Upload directory (relative to /admin/) — admin writes here, customer reads
+// from "/assets/branches/...".
+$BRANCH_UPLOAD_DIR_FS  = __DIR__ . '/../assets/branches/';      // physical path
+$BRANCH_UPLOAD_DIR_WEB = 'assets/branches/';                    // value stored in DB
+if (!is_dir($BRANCH_UPLOAD_DIR_FS)) {
+    @mkdir($BRANCH_UPLOAD_DIR_FS, 0775, true);
+}
+
+// Helper: physically delete a file referenced from the DB.
+$deleteBranchFile = function ($webPath) {
+    if (!$webPath) return;
+    // Don't delete the shared default placeholder
+    if (strpos($webPath, 'assets/default') !== false) return;
+    // Only delete files we ourselves manage (assets/branches/...)
+    if (strpos($webPath, 'assets/branches/') !== 0) return;
+    $fs = __DIR__ . '/../' . $webPath;
+    if (is_file($fs)) @unlink($fs);
+};
+
+// --- Toggle a single branch's availability -------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'toggle_branch_availability') {
+    $bid = (int)($_POST['branch_id'] ?? 0);
+    $new = ((int)($_POST['new_state'] ?? 0) === 1) ? 1 : 0;
+    $reason = trim($_POST['unavailable_reason'] ?? '');
+
+    if ($bid <= 0) {
+        $action_err = "Invalid branch.";
+    } else {
+        // Confirm branch exists
+        $stmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
+        $stmt->execute([$bid]);
+        $bname = $stmt->fetchColumn();
+        if (!$bname) {
+            $action_err = "Branch not found.";
+        } else {
+            $pdo->prepare("
+                INSERT INTO branch_status (branch_id, is_available, unavailable_reason, updated_by_admin_id)
+                VALUES (?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    is_available        = VALUES(is_available),
+                    unavailable_reason  = VALUES(unavailable_reason),
+                    updated_by_admin_id = VALUES(updated_by_admin_id)
+            ")->execute([$bid, $new, $new === 0 ? ($reason ?: null) : null, $current_admin['admin_id']]);
+
+            $action_msg = "<strong>" . htmlspecialchars($bname) . "</strong> is now "
+                        . ($new === 1 ? "<span style='color:#155724;'>available</span>"
+                                      : "<span style='color:#721c24;'>unavailable</span>")
+                        . " for booking.";
+        }
+    }
+}
+
+// --- Toggle GLOBAL maintenance for ALL branches --------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'set_global_maintenance') {
+    $on = ((int)($_POST['state'] ?? 0) === 1) ? 1 : 0;
+    $pdo->prepare("
+        INSERT INTO system_settings (setting_key, setting_value, updated_by_admin_id)
+        VALUES ('all_branches_maintenance', ?, ?)
+        ON DUPLICATE KEY UPDATE
+            setting_value       = VALUES(setting_value),
+            updated_by_admin_id = VALUES(updated_by_admin_id)
+    ")->execute([(string)$on, $current_admin['admin_id']]);
+
+    $action_msg = $on === 1
+        ? "All branches placed under maintenance &mdash; online bookings are now paused."
+        : "Maintenance lifted &mdash; bookings are open again on every available branch.";
+}
+
+// --- Upload / replace a branch image -------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'upload_branch_image') {
+    $bid = (int)($_POST['branch_id'] ?? 0);
+
+    if ($bid <= 0) {
+        $action_err = "Invalid branch.";
+    } elseif (!isset($_FILES['branch_image']) || $_FILES['branch_image']['error'] === UPLOAD_ERR_NO_FILE) {
+        $action_err = "Please choose an image file to upload.";
+    } elseif ($_FILES['branch_image']['error'] !== UPLOAD_ERR_OK) {
+        $action_err = "File upload failed (error code " . (int)$_FILES['branch_image']['error'] . ").";
+    } else {
+        $file = $_FILES['branch_image'];
+        $allowed = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+                    'png' => 'image/png',  'webp' => 'image/webp', 'gif' => 'image/gif'];
+        $maxBytes = 5 * 1024 * 1024; // 5 MB
+
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime  = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        if (!isset($allowed[$ext]) || !in_array($mime, $allowed, true)) {
+            $action_err = "Only JPG, PNG, WEBP and GIF images are allowed.";
+        } elseif ($file['size'] > $maxBytes) {
+            $action_err = "Image is too large (max 5 MB).";
+        } else {
+            // Confirm branch exists
+            $stmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
+            $stmt->execute([$bid]);
+            $bname = $stmt->fetchColumn();
+            if (!$bname) {
+                $action_err = "Branch not found.";
+            } else {
+                $newName = sprintf('branch-%d-%s.%s', $bid, bin2hex(random_bytes(6)), $ext);
+                $destFs  = $BRANCH_UPLOAD_DIR_FS . $newName;
+                $destWeb = $BRANCH_UPLOAD_DIR_WEB . $newName;
+
+                if (!@move_uploaded_file($file['tmp_name'], $destFs)) {
+                    $action_err = "Could not save uploaded file. Check folder permissions on /assets/branches/.";
+                } else {
+                    try {
+                        $pdo->beginTransaction();
+
+                        // Find the current primary image so we can clean it up
+                        $cur = $pdo->prepare("
+                            SELECT image_id, image_path
+                            FROM   branch_images
+                            WHERE  branch_id = ? AND is_primary = 1
+                            LIMIT  1
+                        ");
+                        $cur->execute([$bid]);
+                        $existing = $cur->fetch(PDO::FETCH_ASSOC);
+
+                        if ($existing) {
+                            // Replace path on the existing primary row
+                            $pdo->prepare("
+                                UPDATE branch_images
+                                SET    image_path           = ?,
+                                       uploaded_at          = NOW(),
+                                       uploaded_by_admin_id = ?
+                                WHERE  image_id = ?
+                            ")->execute([$destWeb, $current_admin['admin_id'], $existing['image_id']]);
+                            // Remove the old physical file (only if it lived in our managed folder)
+                            $deleteBranchFile($existing['image_path']);
+                        } else {
+                            // Insert a new primary row
+                            $pdo->prepare("
+                                INSERT INTO branch_images
+                                    (branch_id, image_path, is_primary, uploaded_by_admin_id)
+                                VALUES (?, ?, 1, ?)
+                            ")->execute([$bid, $destWeb, $current_admin['admin_id']]);
+                        }
+
+                        $pdo->commit();
+                        $action_msg = "Image updated for <strong>" . htmlspecialchars($bname) . "</strong>.";
+                    } catch (Exception $e) {
+                        $pdo->rollBack();
+                        @unlink($destFs);
+                        $action_err = "Could not save image: " . htmlspecialchars($e->getMessage());
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Delete a branch's image (revert to default) -------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'delete_branch_image') {
+    $bid = (int)($_POST['branch_id'] ?? 0);
+    if ($bid <= 0) {
+        $action_err = "Invalid branch.";
+    } else {
+        $stmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
+        $stmt->execute([$bid]);
+        $bname = $stmt->fetchColumn();
+        if (!$bname) {
+            $action_err = "Branch not found.";
+        } else {
+            $cur = $pdo->prepare("
+                SELECT image_id, image_path
+                FROM   branch_images
+                WHERE  branch_id = ? AND is_primary = 1
+                LIMIT  1
+            ");
+            $cur->execute([$bid]);
+            $existing = $cur->fetch(PDO::FETCH_ASSOC);
+
+            if (!$existing) {
+                $action_err = "There is no uploaded image to delete for this branch.";
+            } else {
+                $pdo->prepare("DELETE FROM branch_images WHERE image_id = ?")
+                    ->execute([$existing['image_id']]);
+                $deleteBranchFile($existing['image_path']);
+                $action_msg = "Image removed for <strong>" . htmlspecialchars($bname)
+                            . "</strong>. The default placeholder will be shown until a new one is uploaded.";
+            }
+        }
+    }
+}
+
+// =========================================================================
 // View routing & data
 // =========================================================================
 $view = $_GET['view'] ?? 'dashboard';
@@ -309,6 +500,21 @@ if ($view === 'customers') {
 
 } elseif ($view === 'analytics') {
     $pageTitle = "Booking Analytics";
+
+} elseif ($view === 'branches') {
+    $pageTitle = "Branches Management";
+    $branches_data = $pdo->query("
+        SELECT branch_id, branch_name, location, contact_number, opening_hours,
+               image_url, is_available, unavailable_reason, status_updated_at
+        FROM   v_branches_full
+        ORDER  BY branch_name
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $globalMaintenance = (int)$pdo->query("
+        SELECT setting_value FROM system_settings
+        WHERE  setting_key = 'all_branches_maintenance'
+        LIMIT 1
+    ")->fetchColumn();
 
 } elseif ($view === 'admins') {
     $pageTitle = "Admin Management";
@@ -877,6 +1083,186 @@ if ($view === 'customers') {
             display: inline-flex; align-items: center; gap: 6px;
         }
         .btn-submit:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0,119,182,0.4); }
+
+        /* ─────────────────────────────────────────────────────────────
+           BRANCHES MANAGEMENT VIEW
+           ───────────────────────────────────────────────────────────── */
+        .maint-toggle-card {
+            background: linear-gradient(135deg, #fff8e6 0%, #ffe8a3 100%);
+            border: 1px solid rgba(243,156,18,0.35);
+            border-left: 5px solid #f39c12;
+            border-radius: 16px;
+            padding: 1.2rem 1.5rem;
+            margin-bottom: 1.8rem;
+            box-shadow: 0 4px 18px rgba(243,156,18,0.12);
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+            flex-wrap: wrap;
+        }
+        .maint-toggle-card.is-on {
+            background: linear-gradient(135deg, #ffe9e5 0%, #ffc7bd 100%);
+            border-color: rgba(231,76,60,0.4);
+            border-left-color: #e74c3c;
+            box-shadow: 0 4px 18px rgba(231,76,60,0.15);
+        }
+        .maint-toggle-card .mt-icon {
+            width: 48px; height: 48px; border-radius: 12px;
+            background: rgba(243,156,18,0.18); color: #b06d00;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.3rem; flex-shrink: 0;
+        }
+        .maint-toggle-card.is-on .mt-icon {
+            background: rgba(231,76,60,0.18); color: #c0392b;
+        }
+        .maint-toggle-card .mt-text { flex: 1; min-width: 240px; }
+        .maint-toggle-card .mt-text strong {
+            display: block; font-size: 1rem; color: #6b3e00; margin-bottom: 3px;
+        }
+        .maint-toggle-card.is-on .mt-text strong { color: #7d2a20; }
+        .maint-toggle-card .mt-text span {
+            font-size: 0.85rem; color: #8a5a00;
+        }
+        .maint-toggle-card.is-on .mt-text span { color: #a04036; }
+
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 56px;
+            height: 30px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute; cursor: pointer;
+            inset: 0;
+            background: #cfd6dd;
+            border-radius: 30px;
+            transition: 0.3s;
+        }
+        .toggle-slider::before {
+            position: absolute; content: '';
+            height: 24px; width: 24px;
+            left: 3px; top: 3px;
+            background: white; border-radius: 50%;
+            transition: 0.3s;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+        }
+        input:checked + .toggle-slider { background: #e74c3c; }
+        input:checked + .toggle-slider::before { transform: translateX(26px); }
+
+        /* Branch admin grid */
+        .branch-admin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+            gap: 1.5rem;
+        }
+        .branch-admin-card {
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.07);
+            display: flex;
+            flex-direction: column;
+            transition: box-shadow 0.25s, transform 0.25s;
+        }
+        .branch-admin-card:hover {
+            box-shadow: 0 10px 28px rgba(0,119,182,0.15);
+            transform: translateY(-3px);
+        }
+
+        .branch-admin-imgbox {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16/10;
+            background: #eef3f8;
+            overflow: hidden;
+        }
+        .branch-admin-imgbox img {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        .branch-admin-imgbox.is-blocked img {
+            filter: grayscale(55%) brightness(0.88);
+        }
+        .branch-admin-status {
+            position: absolute;
+            top: 10px; left: 10px;
+            padding: 5px 12px;
+            border-radius: 50px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+            display: inline-flex; align-items: center; gap: 5px;
+            color: white;
+        }
+        .branch-admin-status.s-available    { background: rgba(40,167,69,0.95); }
+        .branch-admin-status.s-unavailable  { background: rgba(231,76,60,0.95); }
+        .branch-admin-status.s-maintenance  { background: rgba(243,156,18,0.95); }
+
+        .branch-admin-body {
+            padding: 1.1rem 1.2rem 1.3rem;
+            display: flex; flex-direction: column; gap: 0.8rem;
+            flex: 1;
+        }
+        .branch-admin-body h3 {
+            margin: 0; font-size: 1.1rem; color: var(--primary-dark);
+        }
+        .branch-admin-meta {
+            font-size: 0.82rem; color: #777; line-height: 1.5;
+        }
+        .branch-admin-meta i {
+            color: var(--primary); width: 14px; margin-right: 5px;
+        }
+
+        .branch-admin-actions {
+            display: flex; flex-direction: column; gap: 8px;
+            margin-top: 4px;
+            border-top: 1px dashed #e3e8ee;
+            padding-top: 0.9rem;
+        }
+        .branch-admin-actions .row {
+            display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+        }
+        .branch-admin-actions .label {
+            font-size: 0.75rem; font-weight: 600; color: #888;
+            text-transform: uppercase; letter-spacing: 0.04em;
+            margin: 0; min-width: 64px;
+        }
+        .btn-mini {
+            border: none; cursor: pointer;
+            padding: 6px 13px; border-radius: 50px;
+            font-size: 0.78rem; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 5px;
+            transition: filter 0.2s, transform 0.15s;
+            text-decoration: none;
+            font-family: inherit;
+        }
+        .btn-mini:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn-mini.btn-make-avail   { background: #28a745; color: white; }
+        .btn-mini.btn-make-unavail { background: #e74c3c; color: white; }
+        .btn-mini.btn-upload       { background: var(--primary); color: white; }
+        .btn-mini.btn-replace      { background: rgba(0,119,182,0.12); color: var(--primary-dark); }
+        .btn-mini.btn-delete-img   { background: rgba(231,76,60,0.1);  color: #c0392b; }
+        .btn-mini.btn-delete-img.disabled {
+            opacity: 0.5; pointer-events: none; cursor: not-allowed;
+        }
+
+        .file-input-hidden { display: none; }
+        .branch-admin-card .file-name-preview {
+            font-size: 0.78rem; color: #555;
+            font-style: italic;
+            display: block; word-break: break-all;
+        }
+
+        @media (max-width: 600px) {
+            .branch-admin-grid { grid-template-columns: 1fr; }
+            .maint-toggle-card { flex-direction: column; align-items: flex-start; }
+        }
     </style>
 </head>
 <body>
@@ -899,6 +1285,11 @@ if ($view === 'customers') {
             <li>
                 <a href="dashboard.php?view=feedback" class="<?= $view === 'feedback' ? 'active' : '' ?>">
                     <i class="fas fa-comment-dots"></i> Feedback
+                </a>
+            </li>
+            <li>
+                <a href="dashboard.php?view=branches" class="<?= $view === 'branches' ? 'active' : '' ?>">
+                    <i class="fas fa-umbrella-beach"></i> Branches
                 </a>
             </li>
             <li>
@@ -1365,6 +1756,253 @@ if ($view === 'customers') {
                 <span class="page-info">Page <?= $fb_page ?> of <?= $fb_pages ?></span>
             </div>
             <?php endif; ?>
+
+        <?php elseif ($view === 'branches'): ?>
+            <!-- ══════════════════════ BRANCHES MANAGEMENT VIEW ══════════════════════ -->
+            <div class="glass-panel">
+                <h1><i style="color:var(--secondary);"></i><?= $pageTitle ?></h1>
+                <p style="color:#7f8c8d;margin-bottom:1.5rem;">
+                    Toggle availability per branch, upload or replace branch photos, and place every
+                    branch under maintenance with a single switch when needed.
+                </p>
+
+                <!-- Global maintenance toggle -->
+                <form method="POST" action="dashboard.php?view=branches" id="maintForm" style="margin:0;">
+                    <input type="hidden" name="action" value="set_global_maintenance">
+                    <input type="hidden" name="state" id="maintStateInput" value="<?= $globalMaintenance === 1 ? 0 : 1 ?>">
+                    <div class="maint-toggle-card <?= $globalMaintenance === 1 ? 'is-on' : '' ?>">
+                        <div class="mt-icon">
+                            <i class="fas <?= $globalMaintenance === 1 ? 'fa-tools' : 'fa-power-off' ?>"></i>
+                        </div>
+                        <div class="mt-text">
+                            <strong>
+                                <?= $globalMaintenance === 1
+                                    ? 'All Branches Are Under Maintenance'
+                                    : 'Site-Wide Maintenance: Off' ?>
+                            </strong>
+                            <span>
+                                <?= $globalMaintenance === 1
+                                    ? 'Online bookings are paused on every branch. Toggle off to resume normal operations.'
+                                    : 'Turning this on immediately blocks new bookings on every branch &mdash; useful for resort-wide closures or system-wide events.' ?>
+                            </span>
+                        </div>
+                        <label class="toggle-switch" title="Toggle global maintenance">
+                            <input type="checkbox" id="maintToggle" <?= $globalMaintenance === 1 ? 'checked' : '' ?>
+                                onchange="confirmMaintToggle(this)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </form>
+
+                <!-- Summary line -->
+                <?php
+                    $count_total = count($branches_data);
+                    $count_avail = 0; $count_unavail = 0;
+                    foreach ($branches_data as $b) {
+                        if ((int)$b['is_available'] === 1) $count_avail++; else $count_unavail++;
+                    }
+                ?>
+                <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.2rem;font-size:0.88rem;">
+                    <span><i class="fas fa-building" style="color:var(--primary);margin-right:5px;"></i>
+                        <strong style="color:var(--primary-dark);"><?= $count_total ?></strong>
+                        branch<?= $count_total !== 1 ? 'es' : '' ?> total
+                    </span>
+                    <span><i class="fas fa-check-circle" style="color:#28a745;margin-right:5px;"></i>
+                        <strong style="color:#155724;"><?= $count_avail ?></strong> available
+                    </span>
+                    <span><i class="fas fa-ban" style="color:#e74c3c;margin-right:5px;"></i>
+                        <strong style="color:#721c24;"><?= $count_unavail ?></strong> unavailable
+                    </span>
+                </div>
+
+                <!-- Branch cards -->
+                <?php if (empty($branches_data)): ?>
+                    <p style="text-align:center;padding:2rem;color:#888;">No branches found.</p>
+                <?php else: ?>
+                <div class="branch-admin-grid">
+                    <?php foreach ($branches_data as $b):
+                        $bAvail   = (int)$b['is_available'] === 1;
+                        $blocked  = !$bAvail || $globalMaintenance === 1;
+                        $hasImage = !empty($b['image_url']) && strpos($b['image_url'], 'assets/branches/') === 0;
+
+                        if ($globalMaintenance === 1) {
+                            $sCls='s-maintenance'; $sTxt='<i class="fas fa-tools"></i> Maintenance';
+                        } elseif ($bAvail) {
+                            $sCls='s-available'; $sTxt='<i class="fas fa-check-circle"></i> Available';
+                        } else {
+                            $sCls='s-unavailable'; $sTxt='<i class="fas fa-ban"></i> Unavailable';
+                        }
+                    ?>
+                    <div class="branch-admin-card">
+                        <div class="branch-admin-imgbox <?= $blocked ? 'is-blocked' : '' ?>">
+                            <img src="../<?= htmlspecialchars($b['image_url']) ?>"
+                                 alt="<?= htmlspecialchars($b['branch_name']) ?>"
+                                 onerror="this.src='../assets/default.jpg'">
+                            <span class="branch-admin-status <?= $sCls ?>"><?= $sTxt ?></span>
+                        </div>
+                        <div class="branch-admin-body">
+                            <h3><?= htmlspecialchars($b['branch_name']) ?></h3>
+                            <div class="branch-admin-meta">
+                                <i class="fas fa-map-marker-alt"></i><?= htmlspecialchars($b['location']) ?><br>
+                                <i class="fas fa-clock"></i><?= htmlspecialchars($b['opening_hours'] ?? 'Always Open') ?>
+                            </div>
+
+                            <?php if (!$bAvail && !empty($b['unavailable_reason'])): ?>
+                                <div style="background:rgba(231,76,60,0.06);border-left:3px solid #e74c3c;padding:8px 10px;border-radius:6px;font-size:0.8rem;color:#7d2a20;">
+                                    <strong>Reason:</strong> <?= htmlspecialchars($b['unavailable_reason']) ?>
+                                </div>
+                            <?php endif; ?>
+
+                            <div class="branch-admin-actions">
+                                <!-- Availability toggle -->
+                                <form method="POST" action="dashboard.php?view=branches" class="row"
+                                      data-toggle-form="<?= $b['branch_id'] ?>"
+                                      onsubmit="return confirmAvailabilityToggle(this, <?= (int)$bAvail ?>, '<?= htmlspecialchars(addslashes($b['branch_name'])) ?>');">
+                                    <input type="hidden" name="action"    value="toggle_branch_availability">
+                                    <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
+                                    <input type="hidden" name="new_state" value="<?= $bAvail ? 0 : 1 ?>">
+                                    <input type="hidden" name="unavailable_reason" value="">
+                                    <p class="label">Status</p>
+                                    <?php if ($bAvail): ?>
+                                        <button type="submit" class="btn-mini btn-make-unavail">
+                                            <i class="fas fa-ban"></i> Mark Unavailable
+                                        </button>
+                                    <?php else: ?>
+                                        <button type="submit" class="btn-mini btn-make-avail">
+                                            <i class="fas fa-check"></i> Mark Available
+                                        </button>
+                                    <?php endif; ?>
+                                </form>
+
+                                <!-- Image upload / replace -->
+                                <form method="POST" action="dashboard.php?view=branches" class="row"
+                                      enctype="multipart/form-data"
+                                      onsubmit="return confirmImageUpload(this);">
+                                    <input type="hidden" name="action"    value="upload_branch_image">
+                                    <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
+                                    <p class="label">Image</p>
+                                    <input type="file" name="branch_image" id="bf_<?= $b['branch_id'] ?>"
+                                           class="file-input-hidden"
+                                           accept=".jpg,.jpeg,.png,.webp,.gif"
+                                           onchange="onBranchFileChosen(this, <?= $b['branch_id'] ?>)">
+                                    <label for="bf_<?= $b['branch_id'] ?>" class="btn-mini <?= $hasImage ? 'btn-replace' : 'btn-upload' ?>">
+                                        <i class="fas <?= $hasImage ? 'fa-sync-alt' : 'fa-upload' ?>"></i>
+                                        <?= $hasImage ? 'Replace' : 'Upload' ?>
+                                    </label>
+                                    <button type="submit" class="btn-mini btn-upload"
+                                            id="bs_<?= $b['branch_id'] ?>" style="display:none;">
+                                        <i class="fas fa-save"></i> Save
+                                    </button>
+                                    <span class="file-name-preview" id="bn_<?= $b['branch_id'] ?>"></span>
+                                </form>
+
+                                <!-- Delete image -->
+                                <form method="POST" action="dashboard.php?view=branches" class="row"
+                                      onsubmit="return confirm('Remove the uploaded image for <?= htmlspecialchars(addslashes($b['branch_name'])) ?>? The default placeholder will be shown instead.');">
+                                    <input type="hidden" name="action"    value="delete_branch_image">
+                                    <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
+                                    <p class="label">&nbsp;</p>
+                                    <button type="submit" class="btn-mini btn-delete-img <?= $hasImage ? '' : 'disabled' ?>"
+                                            <?= $hasImage ? '' : 'disabled' ?>
+                                            title="<?= $hasImage ? 'Delete uploaded image' : 'No uploaded image to delete' ?>">
+                                        <i class="fas fa-trash"></i> Delete Image
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Reason modal (used when marking a branch unavailable) -->
+            <div class="modal-overlay" id="reasonModal" onclick="if(event.target===this)closeModal('reasonModal')">
+                <div class="modal">
+                    <h2><i class="fas fa-info-circle"></i> Mark <span id="reasonBranchName"></span> Unavailable</h2>
+                    <p class="modal-subtitle">Optionally describe why this branch is unavailable. Customers will see this reason on the branches page.</p>
+                    <div class="form-group">
+                        <label for="reasonInput">Reason (optional)</label>
+                        <input type="text" id="reasonInput" maxlength="255"
+                               placeholder="e.g. Facility renovation until June 30">
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-cancel" onclick="closeModal('reasonModal')">Cancel</button>
+                        <button type="button" class="btn-submit" onclick="submitReasonForm()">
+                            <i class="fas fa-ban"></i> Confirm
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+                /* ─── Modal helpers reused across the dashboard ─── */
+                function openModal(id)  { document.getElementById(id).classList.add('open'); document.body.style.overflow = 'hidden'; }
+                function closeModal(id) { document.getElementById(id).classList.remove('open'); document.body.style.overflow = ''; }
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+                        document.body.style.overflow = '';
+                    }
+                });
+
+                /* ─── Maintenance toggle confirmation ─── */
+                function confirmMaintToggle(checkbox) {
+                    const turningOn = checkbox.checked;
+                    const msg = turningOn
+                        ? "Place ALL branches under maintenance? This immediately blocks new bookings everywhere on the site."
+                        : "Lift maintenance and re-open all available branches for booking?";
+                    if (!confirm(msg)) {
+                        // Revert visual state
+                        checkbox.checked = !turningOn;
+                        return;
+                    }
+                    document.getElementById('maintStateInput').value = turningOn ? '1' : '0';
+                    document.getElementById('maintForm').submit();
+                }
+
+                /* ─── Per-branch availability confirm + reason capture ─── */
+                let _pendingAvailabilityForm = null;
+                function confirmAvailabilityToggle(form, currentlyAvailable, branchName) {
+                    if (currentlyAvailable === 1) {
+                        // Going Available -> Unavailable: open the reason modal
+                        _pendingAvailabilityForm = form;
+                        document.getElementById('reasonBranchName').textContent = branchName;
+                        document.getElementById('reasonInput').value = '';
+                        openModal('reasonModal');
+                        return false;  // stop default submit; modal will resubmit after Confirm
+                    }
+                    // Going Unavailable -> Available: simple confirm
+                    return confirm("Mark " + branchName + " as available again?");
+                }
+                function submitReasonForm() {
+                    if (!_pendingAvailabilityForm) return;
+                    const reason = document.getElementById('reasonInput').value.trim();
+                    _pendingAvailabilityForm.querySelector('input[name=unavailable_reason]').value = reason;
+                    closeModal('reasonModal');
+                    _pendingAvailabilityForm.submit();
+                }
+
+                /* ─── Image upload UX ─── */
+                function onBranchFileChosen(input, branchId) {
+                    const saveBtn = document.getElementById('bs_' + branchId);
+                    const nameEl  = document.getElementById('bn_' + branchId);
+                    if (input.files && input.files[0]) {
+                        nameEl.textContent  = '\u2192 ' + input.files[0].name;
+                        saveBtn.style.display = 'inline-flex';
+                    } else {
+                        nameEl.textContent  = '';
+                        saveBtn.style.display = 'none';
+                    }
+                }
+                function confirmImageUpload(form) {
+                    const f = form.querySelector('input[type=file]');
+                    if (!f.files || !f.files[0]) {
+                        alert("Please choose an image first."); return false;
+                    }
+                    return true;
+                }
+            </script>
 
         <?php elseif ($view === 'customers'): ?>
             <!-- ══════════════════════ CUSTOMERS VIEW ══════════════════════ -->
