@@ -26,6 +26,40 @@ $bookableBranches = array_values(array_filter($branches, function ($b) use ($glo
     return $globalMaintenance !== 1 && (int)$b['is_available'] === 1;
 }));
 
+/* ───── Gallery images grouped by branch (for the dynamic slider) ────────
+ * One query, then bucket by branch_id. We include the cover (is_primary=1)
+ * as a fallback FIRST slide whenever a branch has no gallery uploads yet,
+ * so the slider always has at least one image to show.
+ * --------------------------------------------------------------------- */
+$galleryStmt = $pdo->query("
+    SELECT branch_id, image_path, is_primary, sort_order
+    FROM   branch_images
+    ORDER  BY branch_id, is_primary DESC, sort_order, image_id
+");
+$galleryByBranch = [];
+$coverByBranch   = [];
+foreach ($galleryStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $bid = (int)$row['branch_id'];
+    if ((int)$row['is_primary'] === 1) {
+        $coverByBranch[$bid] = $row['image_path'];
+    } else {
+        $galleryByBranch[$bid][] = $row['image_path'];
+    }
+}
+// Build the per-branch slider lists: prefer gallery images, else fall back
+// to the cover, else fall back to the system default.
+$sliderByBranch = [];
+foreach ($branches as $br) {
+    $bid = (int)$br['branch_id'];
+    if (!empty($galleryByBranch[$bid])) {
+        $sliderByBranch[$bid] = $galleryByBranch[$bid];
+    } elseif (!empty($coverByBranch[$bid])) {
+        $sliderByBranch[$bid] = [$coverByBranch[$bid]];
+    } else {
+        $sliderByBranch[$bid] = ['assets/default.jpg'];
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postBranchId = isset($_POST['branch_id']) && is_numeric($_POST['branch_id'])
         ? intval($_POST['branch_id']) : null;
@@ -131,6 +165,39 @@ $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
 /* Master flag — the form is only rendered when at least one branch is
  * currently bookable AND we're not under global maintenance. */
 $canBook = ($globalMaintenance !== 1) && !empty($bookableBranches);
+
+/* ───── Pick the slider's initial branch ─────────────────────────────────
+ * Stays in sync with whichever branch the dropdown will default to. */
+$initialSliderBranchId = null;
+if ($preselectedBranch !== null) {
+    foreach ($bookableBranches as $bb) {
+        if ((int)$bb['branch_id'] === (int)$preselectedBranch) {
+            $initialSliderBranchId = (int)$preselectedBranch;
+            break;
+        }
+    }
+}
+if ($initialSliderBranchId === null && !empty($bookableBranches)) {
+    $initialSliderBranchId = (int)$bookableBranches[0]['branch_id'];
+}
+if ($initialSliderBranchId === null && !empty($branches)) {
+    $initialSliderBranchId = (int)$branches[0]['branch_id'];
+}
+$initialSlides = $initialSliderBranchId !== null
+    ? ($sliderByBranch[$initialSliderBranchId] ?? ['assets/default.jpg'])
+    : ['assets/default.jpg'];
+
+$initialBranchName = '';
+$initialBranchLocation = '';
+if ($initialSliderBranchId !== null) {
+    foreach ($branches as $b) {
+        if ((int)$b['branch_id'] === $initialSliderBranchId) {
+            $initialBranchName     = $b['branch_name'];
+            $initialBranchLocation = $b['location'];
+            break;
+        }
+    }
+}
 ?>
 
 <style>
@@ -146,117 +213,182 @@ $canBook = ($globalMaintenance !== 1) && !empty($bookableBranches);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   LEFT  —  Decorative hero panel
+   LEFT  —  Branch gallery slider panel
    ════════════════════════════════════════════════════════════════════════════ */
 .book-hero-panel {
     flex: 1.1;
     background: linear-gradient(155deg, #011f4b 0%, #023e8a 48%, #0077b6 100%);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 60px 56px;
     position: relative;
     overflow: hidden;
     min-height: 100vh;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
 }
 
-/* Large translucent circle — top-right */
-.book-hero-panel::before {
-    content: '';
+/* The slide track — every slide is absolute-positioned, only the active
+   one is visible. Crossfades happen via opacity transitions. */
+.gallery-slider {
     position: absolute;
-    width: 460px; height: 460px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.04);
-    top: -140px; right: -130px;
-    pointer-events: none;
+    inset: 0;
+    overflow: hidden;
 }
-/* Small circle — bottom-left */
-.book-hero-panel::after {
+.gallery-slide {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.9s ease;
+    will-change: opacity;
+}
+.gallery-slide.is-active { opacity: 1; }
+.gallery-slide img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+    /* Subtle "ken burns" zoom for the active slide */
+    transform: scale(1.0);
+    transition: transform 7s linear;
+}
+.gallery-slide.is-active img { transform: scale(1.08); }
+
+/* Top-down vignette that lifts the readability of the overlay text */
+.gallery-slider::before {
     content: '';
     position: absolute;
-    width: 280px; height: 280px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.05);
-    bottom: -70px; left: -60px;
+    inset: 0;
+    background: linear-gradient(180deg,
+                rgba(2,28,73,0.55) 0%,
+                rgba(2,28,73,0.20) 35%,
+                rgba(2,28,73,0.55) 100%);
     pointer-events: none;
+    z-index: 2;
 }
 
-.book-hero-badge {
+/* Floating overlay (branch name, tagline) */
+.gallery-overlay {
+    position: absolute;
+    z-index: 3;
+    left: 56px; right: 56px;
+    bottom: 56px;
+    color: #fff;
+    text-shadow: 0 2px 18px rgba(0,0,0,0.45);
+    pointer-events: none;
+}
+.gallery-overlay-badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    background: rgba(255,255,255,0.10);
-    border: 1px solid rgba(255,255,255,0.18);
-    color: #90e0ef;
-    font-size: 0.73rem;
-    font-weight: 600;
+    gap: 7px;
+    background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.28);
+    color: #ffffff;
+    font-size: 0.68rem;
+    font-weight: 700;
     letter-spacing: 1.6px;
     text-transform: uppercase;
-    padding: 7px 18px;
+    padding: 6px 14px;
     border-radius: 30px;
-    margin-bottom: 30px;
-    width: fit-content;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    margin-bottom: 14px;
 }
-
-.book-hero-title {
+.gallery-overlay-title {
     font-family: 'Playfair Display', serif;
-    font-size: clamp(2rem, 3vw, 2.8rem);
+    font-size: clamp(1.6rem, 2.6vw, 2.5rem);
     font-weight: 700;
+    margin: 0 0 6px;
+    line-height: 1.18;
+    transition: opacity 0.4s ease;
+}
+.gallery-overlay-sub {
+    font-size: 0.88rem;
+    color: rgba(255,255,255,0.85);
+    margin: 0;
+    transition: opacity 0.4s ease;
+}
+.gallery-overlay-sub i { color: #90e0ef; margin-right: 6px; }
+
+/* Side prev / next buttons */
+.gallery-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 4;
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.18);
     color: #fff;
-    line-height: 1.22;
-    margin-bottom: 18px;
-}
-.book-hero-title em {
-    font-style: normal;
-    color: #90e0ef;
-}
-
-.book-hero-subtitle {
-    font-size: 0.93rem;
-    color: rgba(255,255,255,0.68);
-    line-height: 1.75;
-    max-width: 380px;
-    margin-bottom: 48px;
-    font-weight: 400;
-}
-
-/* Feature bullet list */
-.book-feature-list {
-    list-style: none;
-    padding: 0; margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}
-.book-feature-item {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    color: rgba(255,255,255,0.82);
-    font-size: 0.875rem;
-    font-weight: 500;
-}
-.book-feature-icon {
-    width: 38px; height: 38px;
-    border-radius: 10px;
-    background: rgba(255,255,255,0.09);
-    border: 1px solid rgba(255,255,255,0.14);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    color: #90e0ef;
-    font-size: 0.88rem;
+    font-size: 0.95rem;
+    transition: background 0.2s, transform 0.15s;
+}
+.gallery-nav:hover { background: rgba(255,255,255,0.32); }
+.gallery-nav:active { transform: translateY(-50%) scale(0.92); }
+.gallery-nav.prev { left: 22px; }
+.gallery-nav.next { right: 22px; }
+.gallery-nav.is-hidden { display: none; }   /* hidden when only 1 image */
+
+/* Dot indicators */
+.gallery-dots {
+    position: absolute;
+    z-index: 4;
+    bottom: 22px;
+    right: 56px;
+    display: flex;
+    gap: 7px;
+}
+.gallery-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.4);
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: width 0.25s, background 0.25s;
+}
+.gallery-dot.is-active {
+    background: #90e0ef;
+    width: 22px;
+    border-radius: 6px;
 }
 
-/* Bottom wave */
-.book-wave {
+/* Subtle slide-counter (e.g. "3 / 7") top-right */
+.gallery-counter {
     position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 72px;
-    opacity: 0.07;
+    z-index: 4;
+    top: 22px; right: 22px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.85);
+    background: rgba(0,0,0,0.32);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 5px 12px;
+    border-radius: 30px;
+    letter-spacing: 0.04em;
 }
-.book-wave svg { width: 100%; height: 100%; }
+
+/* Empty / placeholder state — shown when there's nothing to display
+   (extreme edge case: no branches at all). */
+.gallery-empty {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: rgba(255,255,255,0.7);
+    text-align: center;
+    padding: 30px;
+}
+.gallery-empty i { font-size: 2.6rem; color: #90e0ef; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    RIGHT  —  Form panel
@@ -722,66 +854,84 @@ $canBook = ($globalMaintenance !== 1) && !empty($bookableBranches);
 @keyframes fadeSlideLeft { from { opacity:0; transform:translateX(28px); } to { opacity:1; transform:translateX(0); } }
 @keyframes pricePop      { 0%{transform:scale(1)} 40%{transform:scale(1.12); color:#0077b6;} 100%{transform:scale(1);} }
 
-.book-hero-badge    { animation: fadeSlideUp 0.55s ease 0.05s both; }
-.book-hero-title    { animation: fadeSlideUp 0.55s ease 0.14s both; }
-.book-hero-subtitle { animation: fadeSlideUp 0.55s ease 0.22s both; }
-.book-feature-list  { animation: fadeSlideUp 0.55s ease 0.30s both; }
+.gallery-overlay    { animation: fadeSlideUp 0.6s ease 0.2s both; }
 .book-form-card     { animation: fadeSlideLeft 0.55s ease 0.10s both; }
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 920px) {
     .book-page-wrapper   { flex-direction: column; }
-    .book-hero-panel     { min-height: auto; padding: 44px 32px 38px; }
-    .book-hero-title     { font-size: 1.85rem; }
-    .book-feature-list   { flex-direction: row; flex-wrap: wrap; gap: 12px; }
-    .book-feature-item   { flex: 1; min-width: 150px; }
+    .book-hero-panel     { min-height: 360px; }
+    .gallery-overlay     { left: 28px; right: 28px; bottom: 28px; }
+    .gallery-dots        { right: 28px; bottom: 14px; }
     .book-form-panel     { min-height: auto; padding: 30px 20px 50px; }
     .book-form-card      { padding: 32px 26px; }
 }
 @media (max-width: 500px) {
-    .book-hero-panel  { padding: 36px 20px 30px; }
-    .book-form-card   { padding: 26px 18px; border-radius: 18px; }
-    .tour-type-grid   { grid-template-columns: 1fr; }
-    .book-step-label  { display: none; }
+    .book-hero-panel     { min-height: 300px; }
+    .gallery-overlay     { left: 18px; right: 18px; bottom: 18px; }
+    .gallery-dots        { right: 18px; bottom: 10px; }
+    .gallery-nav         { width: 36px; height: 36px; font-size: 0.82rem; }
+    .gallery-nav.prev    { left: 12px; }
+    .gallery-nav.next    { right: 12px; }
+    .gallery-counter     { top: 14px; right: 14px; padding: 4px 10px; font-size: 0.68rem; }
+    .book-form-card      { padding: 26px 18px; border-radius: 18px; }
+    .tour-type-grid      { grid-template-columns: 1fr; }
+    .book-step-label     { display: none; }
 }
 </style>
 
 <div class="book-page-wrapper">
 
     <!-- ╔══════════════════════════════════════╗
-         ║         LEFT  –  Hero Panel          ║
+         ║       LEFT  –  Gallery Slider         ║
          ╚══════════════════════════════════════╝ -->
     <div class="book-hero-panel">
-
-        <span class="book-hero-badge">
-            Emiart Private Resorts
-        </span>
-
-        <h1 class="book-hero-title">
-            Ready to<br><em>unwind</em> and<br>escape?
-        </h1>
-
-        <p class="book-hero-subtitle">
-            Reserve your spot at one of our exclusive resort branches. Breathe in the calm, feel the breeze, and let every moment be unforgettable.
-        </p>
-
-        <ul class="book-feature-list">
-            <li class="book-feature-item">
-                <div class="book-feature-icon"><i class="fas fa-shield-alt"></i></div>
-                Secure payment via PayMongo
-            </li>
-            <li class="book-feature-item">
-                <div class="book-feature-icon"><i class="fas fa-calendar-check"></i></div>
-                Real-time slot availability
-            </li>
-        </ul>
-
-        <div class="book-wave">
-            <svg viewBox="0 0 1200 72" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M0,36 C200,72 400,0 600,36 C800,72 1000,0 1200,36 L1200,72 L0,72 Z" fill="white"/>
-            </svg>
+        <div class="gallery-slider" id="gallerySlider">
+            <?php foreach ($initialSlides as $idx => $imgPath): ?>
+                <div class="gallery-slide <?= $idx === 0 ? 'is-active' : '' ?>">
+                    <img src="<?= htmlspecialchars($imgPath) ?>"
+                         alt="<?= htmlspecialchars($initialBranchName) ?> photo"
+                         <?= $idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"' ?>
+                         onerror="this.src='assets/default.jpg'">
+                </div>
+            <?php endforeach; ?>
         </div>
 
+        <button type="button" class="gallery-nav prev <?= count($initialSlides) <= 1 ? 'is-hidden' : '' ?>"
+                id="galleryPrev" aria-label="Previous image">
+            <i class="fas fa-chevron-left"></i>
+        </button>
+        <button type="button" class="gallery-nav next <?= count($initialSlides) <= 1 ? 'is-hidden' : '' ?>"
+                id="galleryNext" aria-label="Next image">
+            <i class="fas fa-chevron-right"></i>
+        </button>
+
+        <div class="gallery-counter" id="galleryCounter">
+            <span id="galleryIdx">1</span> / <span id="galleryTotal"><?= count($initialSlides) ?></span>
+        </div>
+
+        <div class="gallery-overlay">
+            <span class="gallery-overlay-badge">
+                <i></i> Emiart Private Resorts
+            </span>
+            <h1 class="gallery-overlay-title" id="galleryBranchName">
+                <?= htmlspecialchars($initialBranchName ?: 'Welcome') ?>
+            </h1>
+            <p class="gallery-overlay-sub" id="galleryBranchSub">
+                <?php if ($initialBranchLocation): ?>
+                    <i class="fas fa-map-marker-alt"></i><?= htmlspecialchars($initialBranchLocation) ?>
+                <?php else: ?>
+                    <i class="fas fa-info-circle"></i>Select a resort to view its gallery
+                <?php endif; ?>
+            </p>
+        </div>
+
+        <div class="gallery-dots" id="galleryDots">
+            <?php foreach ($initialSlides as $idx => $_): ?>
+                <button type="button" class="gallery-dot <?= $idx === 0 ? 'is-active' : '' ?>"
+                        data-index="<?= $idx ?>" aria-label="Go to image <?= $idx + 1 ?>"></button>
+            <?php endforeach; ?>
+        </div>
     </div>
 
     <!-- ╔══════════════════════════════════════╗
@@ -1007,6 +1157,182 @@ document.querySelectorAll('input[name="type"]').forEach(radio => {
     if (checked && priceDisplay && priceMap[checked.value]) {
         priceDisplay.textContent = priceMap[checked.value];
     }
+})();
+
+/* ═════════════════════════════════════════════════════════════════════════
+   GALLERY SLIDER  —  per-branch image carousel on the LEFT panel
+   ═════════════════════════════════════════════════════════════════════════
+   Data shape:
+     branchSliders.images    = { branchId: ['path', 'path', ...] }
+     branchSliders.names     = { branchId: 'Branch Name' }
+     branchSliders.locations = { branchId: 'Branch location' }
+     branchSliders.initial   = branchId initially selected
+   ────────────────────────────────────────────────────────────────────── */
+const branchSliders = <?= json_encode([
+    'images'    => $sliderByBranch,
+    'names'     => array_column($branches, 'branch_name', 'branch_id'),
+    'locations' => array_column($branches, 'location',    'branch_id'),
+    'initial'   => $initialSliderBranchId,
+], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+
+(function () {
+    const slider     = document.getElementById('gallerySlider');
+    const dotsHost   = document.getElementById('galleryDots');
+    const idxLabel   = document.getElementById('galleryIdx');
+    const totalLabel = document.getElementById('galleryTotal');
+    const counter    = document.getElementById('galleryCounter');
+    const prevBtn    = document.getElementById('galleryPrev');
+    const nextBtn    = document.getElementById('galleryNext');
+    const titleEl    = document.getElementById('galleryBranchName');
+    const subEl      = document.getElementById('galleryBranchSub');
+    const branchSel  = document.getElementById('fieldBranch');
+
+    if (!slider) return; // no slider on this page (e.g. blocked state)
+
+    let currentBranchId = branchSliders.initial;
+    let slides = [];           // array of <div class="gallery-slide"> nodes
+    let activeIdx = 0;
+    let autoTimer = null;
+    const AUTO_INTERVAL = 5000;
+
+    function clearAutoTimer() {
+        if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    }
+    function startAutoTimer() {
+        clearAutoTimer();
+        if (slides.length > 1) {
+            autoTimer = setInterval(() => goTo(activeIdx + 1), AUTO_INTERVAL);
+        }
+    }
+
+    function preloadImages(paths) {
+        // Trigger browser cache for non-active slides so transitions are instant.
+        paths.forEach(p => { const im = new Image(); im.src = p; });
+    }
+
+    function buildSlides(branchId) {
+        const paths = (branchSliders.images && branchSliders.images[branchId]) || ['assets/default.jpg'];
+        const branchName = branchSliders.names[branchId] || '';
+
+        // Wipe existing slides + dots
+        slider.innerHTML = '';
+        dotsHost.innerHTML = '';
+        slides = [];
+
+        paths.forEach((p, i) => {
+            const slide = document.createElement('div');
+            slide.className = 'gallery-slide' + (i === 0 ? ' is-active' : '');
+            const img = document.createElement('img');
+            img.src = p;
+            img.alt = branchName + ' photo';
+            if (i === 0) img.setAttribute('fetchpriority', 'high');
+            else        img.loading = 'lazy';
+            img.onerror = function () { this.src = 'assets/default.jpg'; };
+            slide.appendChild(img);
+            slider.appendChild(slide);
+            slides.push(slide);
+
+            const dot = document.createElement('button');
+            dot.type = 'button';
+            dot.className = 'gallery-dot' + (i === 0 ? ' is-active' : '');
+            dot.setAttribute('aria-label', 'Go to image ' + (i + 1));
+            dot.dataset.index = String(i);
+            dot.addEventListener('click', () => { goTo(i); resetAutoTimer(); });
+            dotsHost.appendChild(dot);
+        });
+
+        activeIdx = 0;
+        if (totalLabel) totalLabel.textContent = paths.length;
+        if (idxLabel)   idxLabel.textContent   = '1';
+        if (counter)    counter.style.display = paths.length > 1 ? '' : 'none';
+        if (prevBtn)    prevBtn.classList.toggle('is-hidden', paths.length <= 1);
+        if (nextBtn)    nextBtn.classList.toggle('is-hidden', paths.length <= 1);
+
+        preloadImages(paths.slice(1));
+    }
+
+    function goTo(targetIdx) {
+        if (slides.length === 0) return;
+        const next = ((targetIdx % slides.length) + slides.length) % slides.length;
+        if (next === activeIdx) return;
+
+        slides[activeIdx].classList.remove('is-active');
+        slides[next].classList.add('is-active');
+
+        const dots = dotsHost.querySelectorAll('.gallery-dot');
+        if (dots[activeIdx]) dots[activeIdx].classList.remove('is-active');
+        if (dots[next])      dots[next].classList.add('is-active');
+
+        activeIdx = next;
+        if (idxLabel) idxLabel.textContent = (next + 1).toString();
+    }
+
+    function resetAutoTimer() { startAutoTimer(); }
+
+    function switchBranch(newBranchId) {
+        if (newBranchId === currentBranchId) return;
+        currentBranchId = newBranchId;
+
+        // Fade-out, rebuild, fade-in
+        slider.style.transition = 'opacity 0.35s ease';
+        slider.style.opacity = '0';
+        setTimeout(() => {
+            buildSlides(newBranchId);
+
+            // Update overlay text
+            const name = branchSliders.names[newBranchId] || '';
+            const loc  = branchSliders.locations[newBranchId] || '';
+            if (titleEl) titleEl.textContent = name;
+            if (subEl)   subEl.innerHTML = loc
+                ? '<i class="fas fa-map-marker-alt"></i>' + escapeHtml(loc)
+                : '<i class="fas fa-info-circle"></i>Select a resort to view its gallery';
+
+            slider.style.opacity = '1';
+            startAutoTimer();
+        }, 350);
+    }
+
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // ── Wire up controls ─────────────────────────────────────────────────
+    if (prevBtn) prevBtn.addEventListener('click', () => { goTo(activeIdx - 1); resetAutoTimer(); });
+    if (nextBtn) nextBtn.addEventListener('click', () => { goTo(activeIdx + 1); resetAutoTimer(); });
+
+    // Initial dot click handlers (server-rendered dots)
+    dotsHost.querySelectorAll('.gallery-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+            goTo(parseInt(dot.dataset.index, 10) || 0);
+            resetAutoTimer();
+        });
+    });
+
+    // Pause auto-rotate when the user hovers the slider
+    const heroPanel = document.querySelector('.book-hero-panel');
+    if (heroPanel) {
+        heroPanel.addEventListener('mouseenter', clearAutoTimer);
+        heroPanel.addEventListener('mouseleave', startAutoTimer);
+    }
+
+    // Cache initial server-rendered slides into the JS array so prev/next/dots
+    // work before the first dropdown change.
+    slides = Array.from(slider.querySelectorAll('.gallery-slide'));
+    activeIdx = 0;
+    preloadImages((branchSliders.images[currentBranchId] || []).slice(1));
+
+    // Branch dropdown drives the slider
+    if (branchSel) {
+        branchSel.addEventListener('change', () => {
+            const newId = parseInt(branchSel.value, 10);
+            if (Number.isFinite(newId)) switchBranch(newId);
+        });
+    }
+
+    startAutoTimer();
 })();
 </script>
 
