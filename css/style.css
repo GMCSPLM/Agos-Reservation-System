@@ -252,18 +252,15 @@ tr:hover td { background: #f8fbfd; }
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 /* ════════════════════════════════════════════════════════════════
-   ADDED: Responsive — original styles above untouched
+   ADDED: Responsive rules — every original style above is untouched
    ════════════════════════════════════════════════════════════════ */
 
-/* Fix horizontal overflow. NOTE: only on body, NOT html —
-   setting overflow-x:hidden on html breaks position:fixed elements */
+/* Prevent horizontal page scroll on all pages */
 body { overflow-x: hidden; }
 
-/* Fix iOS background-attachment:fixed bug (causes blank areas on scroll) */
+/* Fix iOS background-attachment:fixed (causes blank white areas on scroll) */
 @media (max-width: 768px) {
-    body {
-        background-attachment: scroll;
-    }
+    body { background-attachment: scroll; }
 }
 
 /* ── Tablet (≤1024px) ── */
@@ -276,9 +273,9 @@ body { overflow-x: hidden; }
 
 /* ── Mobile (≤768px) ── */
 @media (max-width: 768px) {
-    nav { padding: 1rem 5%; }
+    nav            { padding: 1rem 5%; }
 
-    .hero          { height: 70vh; padding: 0 16px; }
+    .hero          { height: 70vh; padding: 0 16px; background-attachment: scroll; }
     .hero h1       { font-size: 2.2rem; }
     .hero p        { font-size: 1rem; margin-bottom: 1.8rem; }
     .btn-hero      { padding: 0.85rem 2rem; font-size: 0.95rem; }
@@ -291,10 +288,14 @@ body { overflow-x: hidden; }
 
     .auth-box      { margin: 2rem 16px; padding: 2rem 1.5rem; }
 
-    table          { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; font-size: 0.82rem; }
+    /* Scrollable tables instead of page overflow */
+    .table-wrap    { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table          { min-width: 500px; font-size: 0.82rem; }
     th, td         { padding: 12px 14px; }
 
-    .feedback-card { min-width: unset; padding: 20px; }
+    /* Feedback cards — stack instead of scroll */
+    .feedback-grid { flex-direction: column; overflow-x: visible; }
+    .feedback-card { min-width: unset; width: 100%; padding: 20px; }
 }
 
 /* ── Small Mobile (≤480px) ── */
@@ -305,28 +306,15 @@ body { overflow-x: hidden; }
     .logo          { font-size: 1.3rem; }
     .auth-box      { margin: 1.5rem 12px; padding: 1.8rem 1.2rem; }
     .btn-hero      { padding: 0.75rem 1.6rem; font-size: 0.9rem; }
+    .card-content  { padding: 1.2rem; }
+    .card h3       { font-size: 1.2rem; }
 }
 
-/* ── Very Small Mobile (≤375px) — covers 320px devices ── */
-@media (max-width: 375px) {
-    .hero          { height: 62vh; padding: 0 12px; }
-    .hero h1       { font-size: 1.5rem; }
-    .hero p        { font-size: 0.82rem; margin-bottom: 1.4rem; }
-    .btn-hero      { padding: 0.65rem 1.2rem; font-size: 0.82rem; }
-
-    .section-title { font-size: 1.2rem; padding: 6px 14px; margin: 2rem 0 1.2rem 0; }
-
-    .container     { padding: 0 10px 24px 10px; }
-    .grid          { gap: 1.2rem; }
-    .card img      { height: 170px; }
-    .card-content  { padding: 1.2rem; }
-    .card h3       { font-size: 1.15rem; }
-
-    .auth-box      { margin: 1rem 8px; padding: 1.5rem 1rem; }
-    input, select, textarea { padding: 0.8rem; font-size: 0.88rem; }
-    button         { padding: 0.85rem; font-size: 0.92rem; }
-
-    .feedback-card { padding: 18px 16px 14px; }
-    .feedback-card-name { font-size: 0.95rem; }
-    .feedback-card-comment { font-size: 0.85rem; }
+/* ── Extra Small (≤360px) ── */
+@media (max-width: 360px) {
+    .hero h1       { font-size: 1.55rem; }
+    .hero p        { font-size: 0.85rem; }
+    .section-title { font-size: 1.3rem; padding: 6px 16px; }
+    .auth-box      { margin: 1rem 10px; padding: 1.5rem 1rem; }
+    .btn-hero      { padding: 0.7rem 1.4rem; font-size: 0.85rem; }
 }
