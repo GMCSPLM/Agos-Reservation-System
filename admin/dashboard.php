@@ -649,6 +649,210 @@ if ($is_post && ($_POST['action'] ?? '') === 'delete_gallery_image') {
 }
 
 // =========================================================================
+// CUSTOMERS MANAGEMENT — POST handlers (any admin can add/edit/delete)
+// =========================================================================
+// Note: the address column has been dropped from `customers` (see
+// migration.sql). The forms only collect name / email / contact number.
+
+// --- Add a new customer record ------------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'add_customer') {
+    $c_name    = trim($_POST['full_name']     ?? '');
+    $c_email   = trim($_POST['email']         ?? '');
+    $c_contact = trim($_POST['contact_number'] ?? '');
+
+    if ($c_name === '' || $c_email === '') {
+        $action_err = "Full name and email are required.";
+    } elseif (!filter_var($c_email, FILTER_VALIDATE_EMAIL)) {
+        $action_err = "Please provide a valid email address.";
+    } else {
+        // Reject duplicate email (UNIQUE INDEX on customers.email)
+        $check = $pdo->prepare("SELECT customer_id FROM customers WHERE email = ? LIMIT 1");
+        $check->execute([$c_email]);
+        if ($check->fetchColumn()) {
+            $action_err = "A customer with that email already exists.";
+        } else {
+            try {
+                $pdo->prepare("
+                    INSERT INTO customers (full_name, email, contact_number)
+                    VALUES (?, ?, ?)
+                ")->execute([$c_name, $c_email, ($c_contact !== '' ? $c_contact : null)]);
+                $action_msg = "Customer <strong>" . htmlspecialchars($c_name) . "</strong> added successfully.";
+            } catch (Exception $e) {
+                $action_err = "Could not add customer: " . htmlspecialchars($e->getMessage());
+            }
+        }
+    }
+}
+
+// --- Edit an existing customer -------------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'edit_customer') {
+    $c_id      = (int)($_POST['customer_id']   ?? 0);
+    $c_name    = trim($_POST['full_name']      ?? '');
+    $c_email   = trim($_POST['email']          ?? '');
+    $c_contact = trim($_POST['contact_number'] ?? '');
+
+    if ($c_id <= 0) {
+        $action_err = "Invalid customer.";
+    } elseif ($c_name === '' || $c_email === '') {
+        $action_err = "Full name and email are required.";
+    } elseif (!filter_var($c_email, FILTER_VALIDATE_EMAIL)) {
+        $action_err = "Please provide a valid email address.";
+    } else {
+        // Confirm the customer exists
+        $check = $pdo->prepare("SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1");
+        $check->execute([$c_id]);
+        if (!$check->fetchColumn()) {
+            $action_err = "Customer not found.";
+        } else {
+            // Reject email collision with a *different* customer
+            $dup = $pdo->prepare("
+                SELECT customer_id FROM customers
+                WHERE email = ? AND customer_id <> ? LIMIT 1
+            ");
+            $dup->execute([$c_email, $c_id]);
+            if ($dup->fetchColumn()) {
+                $action_err = "Another customer already uses that email address.";
+            } else {
+                try {
+                    $pdo->prepare("
+                        UPDATE customers
+                        SET full_name = ?, email = ?, contact_number = ?
+                        WHERE customer_id = ?
+                    ")->execute([$c_name, $c_email, ($c_contact !== '' ? $c_contact : null), $c_id]);
+
+                    // Keep the linked users.username in sync if there's a login row
+                    $pdo->prepare("
+                        UPDATE users SET username = ?
+                        WHERE customer_id = ? AND role = 'Customer'
+                    ")->execute([$c_email, $c_id]);
+
+                    $action_msg = "Customer <strong>" . htmlspecialchars($c_name) . "</strong> updated.";
+                } catch (Exception $e) {
+                    $action_err = "Could not update customer: " . htmlspecialchars($e->getMessage());
+                }
+            }
+        }
+    }
+}
+
+// --- Delete a customer ---------------------------------------------------
+// Reservations and feedback referencing this customer cascade away via the
+// existing FK ON DELETE CASCADE; the linked user row (if any) is set to
+// customer_id = NULL via FK ON DELETE SET NULL. We additionally remove the
+// orphaned Customer-role login so it cannot be re-used.
+if ($is_post && ($_POST['action'] ?? '') === 'delete_customer') {
+    $c_id = (int)($_POST['customer_id'] ?? 0);
+
+    if ($c_id <= 0) {
+        $action_err = "Invalid customer.";
+    } else {
+        $stmt = $pdo->prepare("SELECT full_name FROM customers WHERE customer_id = ?");
+        $stmt->execute([$c_id]);
+        $cname = $stmt->fetchColumn();
+        if (!$cname) {
+            $action_err = "Customer not found.";
+        } else {
+            try {
+                $pdo->beginTransaction();
+                // Remove the linked Customer-role login (if any). Admin and
+                // Staff accounts are never touched by a customer delete.
+                $pdo->prepare("
+                    DELETE FROM users
+                    WHERE customer_id = ? AND role = 'Customer'
+                ")->execute([$c_id]);
+                $pdo->prepare("DELETE FROM customers WHERE customer_id = ?")->execute([$c_id]);
+                $pdo->commit();
+                $action_msg = "Customer <strong>" . htmlspecialchars($cname) . "</strong> deleted.";
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $action_err = "Could not delete customer: " . htmlspecialchars($e->getMessage());
+            }
+        }
+    }
+}
+
+// =========================================================================
+// AMENITIES MANAGEMENT — POST handlers
+// =========================================================================
+// Schema (already normalized — see migration.sql):
+//   amenities(amenity_id, branch_id FK, amenity_name, description,
+//             availability ENUM('Available','Unavailable'))
+// Customer-side amenities.php reads the same columns; toggles here are
+// reflected immediately on the public page.
+
+// --- Add a new amenity ---------------------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'add_amenity') {
+    $a_branch = (int)($_POST['branch_id']     ?? 0);
+    $a_name   = trim($_POST['amenity_name']   ?? '');
+    $a_desc   = trim($_POST['description']    ?? '');
+    $a_avail  = ($_POST['availability'] ?? 'Available') === 'Unavailable' ? 'Unavailable' : 'Available';
+
+    if ($a_branch <= 0 || $a_name === '') {
+        $action_err = "Branch and amenity name are required.";
+    } else {
+        // Confirm the branch exists
+        $bstmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
+        $bstmt->execute([$a_branch]);
+        $bname = $bstmt->fetchColumn();
+        if (!$bname) {
+            $action_err = "Selected branch does not exist.";
+        } else {
+            try {
+                $pdo->prepare("
+                    INSERT INTO amenities (branch_id, amenity_name, description, availability)
+                    VALUES (?, ?, ?, ?)
+                ")->execute([$a_branch, $a_name, ($a_desc !== '' ? $a_desc : null), $a_avail]);
+                $action_msg = "Amenity <strong>" . htmlspecialchars($a_name)
+                            . "</strong> added to <strong>" . htmlspecialchars($bname) . "</strong>.";
+            } catch (Exception $e) {
+                $action_err = "Could not add amenity: " . htmlspecialchars($e->getMessage());
+            }
+        }
+    }
+}
+
+// --- Toggle an amenity's availability ------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'toggle_amenity_availability') {
+    $a_id = (int)($_POST['amenity_id'] ?? 0);
+    if ($a_id <= 0) {
+        $action_err = "Invalid amenity.";
+    } else {
+        $cur = $pdo->prepare("SELECT amenity_name, availability FROM amenities WHERE amenity_id = ?");
+        $cur->execute([$a_id]);
+        $row = $cur->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            $action_err = "Amenity not found.";
+        } else {
+            $new_state = ($row['availability'] === 'Available') ? 'Unavailable' : 'Available';
+            $pdo->prepare("UPDATE amenities SET availability = ? WHERE amenity_id = ?")
+                ->execute([$new_state, $a_id]);
+            $action_msg = "<strong>" . htmlspecialchars($row['amenity_name']) . "</strong> is now "
+                        . ($new_state === 'Available'
+                            ? "<span style='color:#155724;'>available</span>"
+                            : "<span style='color:#721c24;'>unavailable</span>") . ".";
+        }
+    }
+}
+
+// --- Delete an amenity ---------------------------------------------------
+if ($is_post && ($_POST['action'] ?? '') === 'delete_amenity') {
+    $a_id = (int)($_POST['amenity_id'] ?? 0);
+    if ($a_id <= 0) {
+        $action_err = "Invalid amenity.";
+    } else {
+        $cur = $pdo->prepare("SELECT amenity_name FROM amenities WHERE amenity_id = ?");
+        $cur->execute([$a_id]);
+        $aname = $cur->fetchColumn();
+        if (!$aname) {
+            $action_err = "Amenity not found.";
+        } else {
+            $pdo->prepare("DELETE FROM amenities WHERE amenity_id = ?")->execute([$a_id]);
+            $action_msg = "Amenity <strong>" . htmlspecialchars($aname) . "</strong> deleted.";
+        }
+    }
+}
+
+// =========================================================================
 // View routing & data
 // =========================================================================
 $view = $_GET['view'] ?? 'dashboard';
@@ -755,13 +959,23 @@ $reservation_types = $pdo->query($type_query)->fetchAll(PDO::FETCH_ASSOC);
 if ($view === 'customers') {
     $pageTitle = "Registered Customers";
 
-    // Search
+    // Search — full name, email, or contact number (partial match, case-insensitive
+    // by default for utf8/utf8mb4_*_ci collations). We use three DISTINCT named
+    // placeholders rather than reusing :q because reusing a named placeholder
+    // raises SQLSTATE[HY093] on native prepared statements (i.e. when
+    // PDO::ATTR_EMULATE_PREPARES is false). This was the root cause of the
+    // search bar appearing to do nothing.
     $cust_search = trim($_GET['q'] ?? '');
     $where_sql = '';
     $params = [];
     if ($cust_search !== '') {
-        $where_sql = "WHERE full_name LIKE :q OR email LIKE :q OR contact_number LIKE :q";
-        $params[':q'] = '%' . $cust_search . '%';
+        $where_sql = "WHERE full_name      LIKE :q_name
+                         OR email          LIKE :q_email
+                         OR contact_number LIKE :q_contact";
+        $like = '%' . $cust_search . '%';
+        $params[':q_name']    = $like;
+        $params[':q_email']   = $like;
+        $params[':q_contact'] = $like;
     }
 
     // Pagination
@@ -775,12 +989,41 @@ if ($view === 'customers') {
     $cust_page  = min($cust_page, $cust_pages);
     $cust_offset = ($cust_page - 1) * $cust_per_page;
 
-    $sql = "SELECT * FROM customers $where_sql
+    // Note: address column has been dropped from `customers` (see migration.sql),
+    // so we explicitly list the columns the dashboard consumes — using SELECT *
+    // would still work but is brittle if the schema changes again.
+    $sql = "SELECT customer_id, full_name, email, contact_number, created_at
+            FROM customers
+            $where_sql
             ORDER BY customer_id DESC
             LIMIT $cust_per_page OFFSET $cust_offset";
     $list_stmt = $pdo->prepare($sql);
     $list_stmt->execute($params);
     $data = $list_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+} elseif ($view === 'amenities') {
+    $pageTitle = "Amenities Management";
+
+    // Branches — needed for the "Add Amenity" branch dropdown.
+    $amenity_branches = $pdo->query("
+        SELECT branch_id, branch_name
+        FROM branches
+        ORDER BY branch_name
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // All amenities, grouped by branch in the view.
+    $amenities_data = $pdo->query("
+        SELECT a.amenity_id, a.branch_id, a.amenity_name, a.description, a.availability,
+               b.branch_name
+        FROM amenities a
+        JOIN branches b ON a.branch_id = b.branch_id
+        ORDER BY b.branch_name, a.amenity_name
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $amenities_by_branch = [];
+    foreach ($amenities_data as $am) {
+        $amenities_by_branch[(int)$am['branch_id']][] = $am;
+    }
 
 } elseif ($view === 'analytics') {
     $pageTitle = "Booking Analytics";
@@ -829,7 +1072,7 @@ if ($view === 'customers') {
 } elseif ($view === 'feedback') {
     $pageTitle = "User Feedback";
 
-    $fb_per_page = 10;
+    $fb_per_page = 12;
     $fb_page     = max(1, (int)($_GET['page'] ?? 1));
 
     $allowed_ratings = ['All', '1', '2', '3', '4', '5'];
@@ -862,11 +1105,29 @@ if ($view === 'customers') {
     $filter_status = isset($_GET['status']) && in_array($_GET['status'], $allowed_statuses)
                      ? $_GET['status'] : 'All';
 
+    // ── Reservations Month/Year filter ────────────────────────────────────
+    // 'All' (the default) means "don't restrict by date". Picking a specific
+    // month and/or year narrows the list down. The filter is intentionally
+    // permissive — month-only and year-only are both valid combinations,
+    // matching the compact UI control rendered below.
+    $allowed_res_month = (isset($_GET['res_month']) && $_GET['res_month'] !== 'All'
+                          && (int)$_GET['res_month'] >= 1 && (int)$_GET['res_month'] <= 12)
+                          ? (int)$_GET['res_month'] : null;
+    $allowed_res_year  = (isset($_GET['res_year']) && $_GET['res_year'] !== 'All'
+                          && (int)$_GET['res_year'] >= 2020 && (int)$_GET['res_year'] <= $current_year + 1)
+                          ? (int)$_GET['res_year']  : null;
+
     $exclude_holds = "NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')";
 
     $where_clause = "WHERE " . $exclude_holds;
     if ($filter_status !== 'All') {
         $where_clause .= " AND r.status = " . $pdo->quote($filter_status);
+    }
+    if ($allowed_res_month !== null) {
+        $where_clause .= " AND MONTH(r.reservation_date) = " . (int)$allowed_res_month;
+    }
+    if ($allowed_res_year !== null) {
+        $where_clause .= " AND YEAR(r.reservation_date) = " . (int)$allowed_res_year;
     }
 
     $per_page     = 10;
@@ -885,6 +1146,20 @@ if ($view === 'customers') {
         ORDER BY r.reservation_id DESC
         LIMIT $per_page OFFSET $offset
     ")->fetchAll();
+
+    // Distinct years that actually have reservations — populates the year
+    // dropdown in the filter bar so admins only see meaningful options.
+    $res_year_list = array_map('intval', $pdo->query("
+        SELECT DISTINCT YEAR(reservation_date) AS y
+        FROM reservations
+        WHERE reservation_date IS NOT NULL
+        ORDER BY y DESC
+    ")->fetchAll(PDO::FETCH_COLUMN));
+    if (!in_array($current_year, $res_year_list, true)) {
+        $res_year_list[] = $current_year;
+        rsort($res_year_list);
+    }
+
     $pageTitle = "Reservation Overview";
 }
 ?>
@@ -1382,6 +1657,59 @@ if ($view === 'customers') {
         .btn-submit:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0,119,182,0.4); }
 
         /* ─────────────────────────────────────────────────────────────
+           PASSWORD FIELD — show / hide toggle (Admins → Change Password)
+           ─────────────────────────────────────────────────────────────
+           A relative wrapper around the <input> hosts an absolutely
+           positioned eye button. The button toggles the input's `type`
+           between "password" and "text" purely on the client; the value
+           is still hashed via password_hash() on submit.
+        */
+        .password-field {
+            position: relative;
+            display: block;
+        }
+        .modal .password-field input[type="password"],
+        .modal .password-field input[type="text"] {
+            /* Reserve room for the eye button on the right edge */
+            padding-right: 46px;
+        }
+        .password-toggle {
+            position: absolute;
+            top: 50%;
+            right: 6px;
+            transform: translateY(-50%);
+            width: 34px;
+            height: 34px;
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #8a96a3;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: color 0.18s, background 0.18s, box-shadow 0.18s;
+            font-family: inherit;
+        }
+        .password-toggle:hover {
+            color: var(--primary);
+            background: rgba(0,119,182,0.08);
+        }
+        .password-toggle:focus-visible {
+            outline: none;
+            color: var(--primary);
+            background: rgba(0,119,182,0.10);
+            box-shadow: 0 0 0 2px rgba(0,119,182,0.22);
+        }
+        .password-toggle i { pointer-events: none; }
+        /* Hide the native "reveal" widget Edge/IE add to password inputs so
+           we don't end up with two competing eye icons. */
+        .password-field input::-ms-reveal,
+        .password-field input::-ms-clear { display: none; }
+
+        /* ─────────────────────────────────────────────────────────────
            BRANCHES MANAGEMENT VIEW
            ───────────────────────────────────────────────────────────── */
         .maint-toggle-card {
@@ -1681,6 +2009,180 @@ if ($view === 'customers') {
             .branch-admin-grid { grid-template-columns: 1fr; }
             .maint-toggle-card { flex-direction: column; align-items: flex-start; }
         }
+
+        /* ─────────────────────────────────────────────────────────────
+           CUSTOMER ROW ACTIONS (edit / delete inline buttons)
+           ───────────────────────────────────────────────────────────── */
+        .row-actions {
+            display: inline-flex; gap: 6px; align-items: center;
+        }
+        .btn-row {
+            border: none; cursor: pointer;
+            padding: 6px 12px; border-radius: 50px;
+            font-size: 0.78rem; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 5px;
+            transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
+            text-decoration: none; font-family: inherit;
+        }
+        .btn-row:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn-row.btn-edit   { background: rgba(0,119,182,0.12); color: var(--primary-dark); }
+        .btn-row.btn-edit:hover   { background: var(--primary); color: white; }
+        .btn-row.btn-trash  { background: rgba(231,76,60,0.1); color: #c0392b; }
+        .btn-row.btn-trash:hover  { background: #e74c3c; color: white; }
+        .btn-row.btn-toggle-avail   { background: rgba(231,76,60,0.1); color: #c0392b; }
+        .btn-row.btn-toggle-avail:hover { background: #e74c3c; color: white; }
+        .btn-row.btn-toggle-unavail { background: rgba(40,167,69,0.12); color: #155724; }
+        .btn-row.btn-toggle-unavail:hover { background: #28a745; color: white; }
+
+        .modal textarea {
+            width: 100%; padding: 11px 14px; border-radius: 10px;
+            border: 2px solid #e3e8ee; font-size: 0.9rem;
+            font-family: inherit; resize: vertical; min-height: 80px;
+            box-sizing: border-box;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .modal textarea:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+        }
+        .modal select {
+            width: 100%; padding: 11px 14px; border-radius: 10px;
+            border: 2px solid #e3e8ee; font-size: 0.9rem;
+            background: white; cursor: pointer; box-sizing: border-box;
+            font-family: inherit;
+        }
+        .modal select:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+        }
+
+        /* ─────────────────────────────────────────────────────────────
+           RESERVATIONS — compact Month/Year filter pill
+           ───────────────────────────────────────────────────────────── */
+        .res-date-filter {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 6px 4px 12px;
+            background: rgba(0,119,182,0.06);
+            border: 1.5px solid rgba(0,119,182,0.18);
+            border-radius: 50px;
+            margin-left: auto;
+        }
+        .res-date-filter .rd-label {
+            font-size: 0.78rem; font-weight: 600; color: var(--primary-dark);
+            display: inline-flex; align-items: center; gap: 5px;
+        }
+        .res-date-filter select {
+            appearance: none; -webkit-appearance: none;
+            background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24'%3E%3Cpath fill='%230077b6' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") no-repeat right 8px center;
+            border: 1.5px solid rgba(0,119,182,0.2);
+            border-radius: 50px;
+            padding: 5px 24px 5px 11px;
+            font-size: 0.78rem; font-weight: 600; color: #2c3e50;
+            cursor: pointer; outline: none; font-family: inherit;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .res-date-filter select:hover, .res-date-filter select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
+        }
+        .res-date-filter button {
+            background: var(--primary); color: white; border: none;
+            padding: 5px 14px; border-radius: 50px; cursor: pointer;
+            font-size: 0.78rem; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 5px;
+            transition: filter 0.15s; font-family: inherit;
+        }
+        .res-date-filter button:hover { filter: brightness(1.1); }
+        .res-date-filter .rd-reset {
+            color: #999; text-decoration: none; font-size: 0.75rem;
+            padding: 4px 9px; border-radius: 50px;
+        }
+        .res-date-filter .rd-reset:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
+
+        @media (max-width: 760px) {
+            .res-date-filter { width: 100%; margin-left: 0; flex-wrap: wrap; }
+        }
+
+        /* ─────────────────────────────────────────────────────────────
+           AMENITIES MANAGEMENT VIEW
+           ───────────────────────────────────────────────────────────── */
+        .am-branch-section {
+            background: white;
+            border-radius: 16px;
+            padding: 1.4rem 1.6rem;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.07);
+            margin-bottom: 1.5rem;
+        }
+        .am-branch-header {
+            display: flex; align-items: center; gap: 12px;
+            padding-bottom: 0.8rem; margin-bottom: 1rem;
+            border-bottom: 2px dashed rgba(0,119,182,0.15);
+        }
+        .am-branch-header .am-branch-icon {
+            width: 38px; height: 38px; border-radius: 10px;
+            background: rgba(0,119,182,0.12); color: var(--primary-dark);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1rem; flex-shrink: 0;
+        }
+        .am-branch-header h3 {
+            margin: 0; font-size: 1.05rem; color: var(--primary-dark);
+        }
+        .am-branch-header .am-count {
+            margin-left: auto;
+            font-size: 0.78rem; font-weight: 700;
+            padding: 4px 11px; border-radius: 50px;
+            background: rgba(0,119,182,0.1); color: var(--primary-dark);
+        }
+
+        .am-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 0.9rem;
+        }
+        .am-card {
+            background: linear-gradient(135deg, rgba(0,119,182,0.04) 0%, rgba(102,126,234,0.04) 100%);
+            border: 1px solid rgba(0,119,182,0.15);
+            border-left: 4px solid var(--secondary);
+            border-radius: 14px;
+            padding: 1rem 1.1rem;
+            display: flex; flex-direction: column; gap: 8px;
+            transition: transform 0.18s, box-shadow 0.18s;
+        }
+        .am-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,119,182,0.12); }
+        .am-card.is-unavail {
+            background: linear-gradient(135deg, rgba(231,76,60,0.05) 0%, rgba(231,76,60,0.02) 100%);
+            border-color: rgba(231,76,60,0.2);
+            border-left-color: #e74c3c;
+        }
+        .am-card-head {
+            display: flex; align-items: flex-start; gap: 10px;
+            justify-content: space-between;
+        }
+        .am-card-head h4 {
+            margin: 0; font-size: 0.98rem; color: #2c3e50;
+            line-height: 1.3;
+        }
+        .am-status-pill {
+            font-size: 0.7rem; font-weight: 700;
+            padding: 3px 10px; border-radius: 50px;
+            text-transform: uppercase; letter-spacing: 0.04em;
+            white-space: nowrap;
+        }
+        .am-status-pill.s-on  { background: #d4edda; color: #155724; }
+        .am-status-pill.s-off { background: #f8d7da; color: #721c24; }
+        .am-card p {
+            margin: 0; font-size: 0.83rem; color: #666; line-height: 1.5;
+        }
+        .am-card .am-actions {
+            display: flex; gap: 6px; margin-top: auto;
+            padding-top: 8px; border-top: 1px dashed rgba(0,0,0,0.07);
+        }
+        .am-empty {
+            padding: 1rem; background: rgba(0,119,182,0.04);
+            border: 1px dashed rgba(0,119,182,0.18);
+            border-radius: 10px; color: #666;
+            font-size: 0.85rem; text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -1708,6 +2210,11 @@ if ($view === 'customers') {
             <li>
                 <a href="dashboard.php?view=branches" class="<?= $view === 'branches' ? 'active' : '' ?>">
                     <i class="fas fa-umbrella-beach"></i> Branches
+                </a>
+            </li>
+            <li>
+                <a href="dashboard.php?view=amenities" class="<?= $view === 'amenities' ? 'active' : '' ?>">
+                    <i class="fas fa-swimming-pool"></i> Amenities
                 </a>
             </li>
             <li>
@@ -1762,8 +2269,6 @@ if ($view === 'customers') {
                     // Active-preset detection
                     $is_this_month  = ($filter_month === $current_month && $filter_year === $current_year);
                     $is_last_month  = ($filter_month === $last_month_m && $filter_year === $last_month_y);
-                    $is_jan_current = ($filter_month === 1 && $filter_year === $current_year);
-                    $is_jan_prev    = ($filter_month === 1 && $filter_year === $current_year - 1);
                 ?>
 
                 <div class="analytics-filter-card">
@@ -1776,7 +2281,8 @@ if ($view === 'customers') {
                         </span>
                     </div>
 
-                    <!-- Quick Presets -->
+                    <!-- Quick Presets (January-year buttons removed; admins can still
+                         pick any month/year via the Custom selector below) -->
                     <div class="af-presets">
                         <a href="dashboard.php?view=analytics&month=<?= $current_month ?>&year=<?= $current_year ?>"
                            class="af-preset <?= $is_this_month ? 'active' : '' ?>">
@@ -1785,14 +2291,6 @@ if ($view === 'customers') {
                         <a href="dashboard.php?view=analytics&month=<?= $last_month_m ?>&year=<?= $last_month_y ?>"
                            class="af-preset <?= $is_last_month ? 'active' : '' ?>">
                             <i class="fas fa-calendar-minus"></i> Last Month
-                        </a>
-                        <a href="dashboard.php?view=analytics&month=1&year=<?= $current_year ?>"
-                           class="af-preset <?= $is_jan_current ? 'active' : '' ?>">
-                            <i class="fas fa-calendar"></i> January <?= $current_year ?>
-                        </a>
-                        <a href="dashboard.php?view=analytics&month=1&year=<?= $current_year - 1 ?>"
-                           class="af-preset <?= $is_jan_prev ? 'active' : '' ?>">
-                            <i class="fas fa-history"></i> January <?= $current_year - 1 ?>
                         </a>
                     </div>
 
@@ -2057,7 +2555,7 @@ if ($view === 'customers') {
         <?php elseif ($view === 'feedback'): ?>
             <!-- ══════════════════════ FEEDBACK VIEW ══════════════════════ -->
             <div class="glass-panel">
-                <h1><i class="fas fa-comment-dots" style="color:var(--secondary);margin-right:10px;"></i><?= $pageTitle ?></h1>
+                <h1><i style="color:var(--secondary)"></i><?= $pageTitle ?></h1>
                 <p style="color:#7f8c8d;margin-bottom:1.8rem;">Customer satisfaction & reviews across all branches</p>
 
                 <div class="feedback-summary">
@@ -2532,6 +3030,164 @@ if ($view === 'customers') {
                 }
             </script>
 
+        <?php elseif ($view === 'amenities'): ?>
+            <!-- ══════════════════════ AMENITIES MANAGEMENT VIEW ══════════════════════ -->
+            <div class="glass-panel">
+                <h1><i class="fas fa-swimming-pool" style="color:var(--secondary);margin-right:10px;"></i><?= $pageTitle ?></h1>
+                <p style="color:#7f8c8d;margin-bottom:1.5rem;">
+                    Add new amenities, mark them as unavailable when undergoing maintenance,
+                    or remove them entirely. All changes are reflected immediately on the
+                    customer-facing Amenities page.
+                </p>
+
+                <div class="admin-toolbar">
+                    <span style="font-size:0.85rem;color:#777;">
+                        <strong style="color:var(--primary-dark);"><?= count($amenities_data) ?></strong>
+                        amenit<?= count($amenities_data) !== 1 ? 'ies' : 'y' ?> across
+                        <strong style="color:var(--primary-dark);"><?= count($amenity_branches) ?></strong>
+                        branch<?= count($amenity_branches) !== 1 ? 'es' : '' ?>
+                    </span>
+                    <div class="toolbar-actions">
+                        <button type="button" class="btn-action" onclick="openModal('addAmenityModal')">
+                            <i class="fas fa-plus"></i> Add Amenity
+                        </button>
+                    </div>
+                </div>
+
+                <?php if (empty($amenity_branches)): ?>
+                    <div class="am-empty">
+                        <i class="fas fa-info-circle"></i>
+                        No branches found. Add a branch first before creating amenities.
+                    </div>
+                <?php else: ?>
+                    <?php foreach ($amenity_branches as $br):
+                        $b_id    = (int)$br['branch_id'];
+                        $b_items = $amenities_by_branch[$b_id] ?? [];
+                    ?>
+                    <div class="am-branch-section">
+                        <div class="am-branch-header">
+                            <div class="am-branch-icon"><i class="fas fa-building"></i></div>
+                            <h3><?= htmlspecialchars($br['branch_name']) ?></h3>
+                            <span class="am-count"><?= count($b_items) ?> amenit<?= count($b_items) !== 1 ? 'ies' : 'y' ?></span>
+                        </div>
+
+                        <?php if (empty($b_items)): ?>
+                            <div class="am-empty">
+                                <i class="fas fa-info-circle" style="color:var(--primary);margin-right:5px;"></i>
+                                No amenities yet for this branch. Click <strong>Add Amenity</strong> above
+                                and choose this branch.
+                            </div>
+                        <?php else: ?>
+                        <div class="am-grid">
+                            <?php foreach ($b_items as $am):
+                                $is_avail = ($am['availability'] === 'Available');
+                            ?>
+                            <div class="am-card <?= $is_avail ? '' : 'is-unavail' ?>">
+                                <div class="am-card-head">
+                                    <h4><?= htmlspecialchars($am['amenity_name']) ?></h4>
+                                    <span class="am-status-pill <?= $is_avail ? 's-on' : 's-off' ?>">
+                                        <?= $is_avail ? 'Available' : 'Unavailable' ?>
+                                    </span>
+                                </div>
+                                <p><?= !empty($am['description']) ? htmlspecialchars($am['description']) : '<em style="color:#999;">No description.</em>' ?></p>
+
+                                <div class="am-actions">
+                                    <!-- Toggle availability -->
+                                    <form method="POST" action="dashboard.php?view=amenities" style="margin:0;">
+                                        <input type="hidden" name="action" value="toggle_amenity_availability">
+                                        <input type="hidden" name="amenity_id" value="<?= $am['amenity_id'] ?>">
+                                        <?php if ($is_avail): ?>
+                                            <button type="submit" class="btn-row btn-toggle-avail"
+                                                    onclick="return confirm('Mark <?= htmlspecialchars(addslashes($am['amenity_name'])) ?> as Unavailable?');">
+                                                <i class="fas fa-ban"></i> Mark Unavailable
+                                            </button>
+                                        <?php else: ?>
+                                            <button type="submit" class="btn-row btn-toggle-unavail">
+                                                <i class="fas fa-check"></i> Mark Available
+                                            </button>
+                                        <?php endif; ?>
+                                    </form>
+
+                                    <!-- Delete amenity -->
+                                    <form method="POST" action="dashboard.php?view=amenities" style="margin:0;"
+                                          onsubmit="return confirm('Permanently delete the amenity \'<?= htmlspecialchars(addslashes($am['amenity_name'])) ?>\'? This cannot be undone.');">
+                                        <input type="hidden" name="action" value="delete_amenity">
+                                        <input type="hidden" name="amenity_id" value="<?= $am['amenity_id'] ?>">
+                                        <button type="submit" class="btn-row btn-trash">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+
+            <!-- Add Amenity Modal -->
+            <div class="modal-overlay" id="addAmenityModal" onclick="if(event.target===this)closeModal('addAmenityModal')">
+                <div class="modal">
+                    <h2><i class="fas fa-plus-circle"></i> Add New Amenity</h2>
+                    <p class="modal-subtitle">Create a new amenity record. It will appear on the customer-facing Amenities page right away.</p>
+
+                    <form method="POST" action="dashboard.php?view=amenities">
+                        <input type="hidden" name="action" value="add_amenity">
+                        <div class="form-group">
+                            <label for="aa_branch">Branch</label>
+                            <select id="aa_branch" name="branch_id" required>
+                                <option value="">— Select a branch —</option>
+                                <?php foreach ($amenity_branches as $br): ?>
+                                    <option value="<?= $br['branch_id'] ?>"><?= htmlspecialchars($br['branch_name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="aa_name">Amenity Name</label>
+                            <input type="text" id="aa_name" name="amenity_name" required maxlength="100"
+                                   placeholder="e.g. Swimming Pool">
+                        </div>
+                        <div class="form-group">
+                            <label for="aa_desc">Description (optional)</label>
+                            <textarea id="aa_desc" name="description" maxlength="500"
+                                      placeholder="A short note customers will see (max 500 chars)."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="aa_avail">Availability</label>
+                            <select id="aa_avail" name="availability">
+                                <option value="Available" selected>Available</option>
+                                <option value="Unavailable">Unavailable</option>
+                            </select>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('addAmenityModal')">Cancel</button>
+                            <button type="submit" class="btn-submit">
+                                <i class="fas fa-plus"></i> Create Amenity
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <script>
+                function openModal(id) {
+                    document.getElementById(id).classList.add('open');
+                    document.body.style.overflow = 'hidden';
+                }
+                function closeModal(id) {
+                    document.getElementById(id).classList.remove('open');
+                    document.body.style.overflow = '';
+                }
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+                        document.body.style.overflow = '';
+                    }
+                });
+            </script>
+
         <?php elseif ($view === 'customers'): ?>
             <!-- ══════════════════════ CUSTOMERS VIEW ══════════════════════ -->
             <div class="glass-panel">
@@ -2541,9 +3197,12 @@ if ($view === 'customers') {
                     <form method="GET" action="dashboard.php" style="margin:0;">
                         <input type="hidden" name="view" value="customers">
                         <div class="search-box">
-                            <i class="fas fa-search"></i>
-                            <input type="text" name="q" placeholder="Search by name, email or contact…"
-                                   value="<?= htmlspecialchars($cust_search) ?>">
+                            <i class="fas fa-search" aria-hidden="true"></i>
+                            <input type="search" name="q"
+                                   placeholder="Search by name, email or contact number…"
+                                   value="<?= htmlspecialchars($cust_search) ?>"
+                                   aria-label="Search customers"
+                                   autocomplete="off">
                             <button type="submit">Search</button>
                             <?php if ($cust_search !== ''): ?>
                                 <a href="dashboard.php?view=customers" class="search-clear" title="Clear search">
@@ -2557,6 +3216,9 @@ if ($view === 'customers') {
                             <strong style="color:var(--primary-dark);"><?= $cust_total ?></strong>
                             customer<?= $cust_total !== 1 ? 's' : '' ?>
                         </span>
+                        <button type="button" class="btn-action" onclick="openModal('addCustomerModal')">
+                            <i class="fas fa-user-plus"></i> Add Customer
+                        </button>
                         <a href="export_customers.php<?= $cust_search !== '' ? '?q=' . urlencode($cust_search) : '' ?>"
                            class="export-btn" title="Download CSV">
                             <i class="fas fa-file-export"></i> Export CSV
@@ -2572,8 +3234,8 @@ if ($view === 'customers') {
                                 <th>Full Name</th>
                                 <th>Email</th>
                                 <th>Contact</th>
-                                <th>Address</th>
                                 <th>Registered</th>
+                                <th style="text-align:right;">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2589,10 +3251,31 @@ if ($view === 'customers') {
                                     </div>
                                 </td>
                                 <td><?= htmlspecialchars($row['email']) ?></td>
-                                <td><?= htmlspecialchars($row['contact_number']) ?></td>
-                                <td><?= htmlspecialchars($row['address'] ?? 'N/A') ?></td>
+                                <td><?= htmlspecialchars($row['contact_number'] ?? '—') ?></td>
                                 <td style="color:#888;font-size:0.85rem;">
                                     <?= !empty($row['created_at']) ? date('M d, Y', strtotime($row['created_at'])) : '—' ?>
+                                </td>
+                                <td style="text-align:right;">
+                                    <div class="row-actions">
+                                        <button type="button" class="btn-row btn-edit"
+                                                onclick='openEditCustomer(<?= json_encode([
+                                                    "id"      => (int)$row["customer_id"],
+                                                    "name"    => $row["full_name"],
+                                                    "email"   => $row["email"],
+                                                    "contact" => $row["contact_number"] ?? "",
+                                                ], JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_TAG|JSON_HEX_AMP) ?>)'>
+                                            <i class="fas fa-pen"></i> Edit
+                                        </button>
+                                        <form method="POST" action="dashboard.php?view=customers<?= $cust_search !== '' ? '&q=' . urlencode($cust_search) : '' ?>"
+                                              style="display:inline;margin:0;"
+                                              onsubmit="return confirm('Permanently delete customer \'<?= htmlspecialchars(addslashes($row['full_name'])) ?>\'? Their reservations and feedback will also be removed. This cannot be undone.');">
+                                            <input type="hidden" name="action" value="delete_customer">
+                                            <input type="hidden" name="customer_id" value="<?= $row['customer_id'] ?>">
+                                            <button type="submit" class="btn-row btn-trash">
+                                                <i class="fas fa-trash"></i> Delete
+                                            </button>
+                                        </form>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -2601,7 +3284,13 @@ if ($view === 'customers') {
 
                     <?php if(empty($data)): ?>
                         <p style="text-align:center; padding: 2rem; color: #888;">
-                            <?= $cust_search !== '' ? 'No customers match your search.' : 'No customers found.' ?>
+                            <?php if ($cust_search !== ''): ?>
+                                <i class="fas fa-search" style="margin-right:6px;color:#bbb;"></i>
+                                No customer found matching
+                                &ldquo;<strong><?= htmlspecialchars($cust_search) ?></strong>&rdquo;.
+                            <?php else: ?>
+                                No customers found.
+                            <?php endif; ?>
                         </p>
                     <?php endif; ?>
                 </div>
@@ -2634,6 +3323,94 @@ if ($view === 'customers') {
                 <?php endif; ?>
             </div>
 
+            <!-- Add Customer Modal -->
+            <div class="modal-overlay" id="addCustomerModal" onclick="if(event.target===this)closeModal('addCustomerModal')">
+                <div class="modal">
+                    <h2><i class="fas fa-user-plus"></i> Add New Customer</h2>
+                    <p class="modal-subtitle">Create a new customer record. Customers added here can later sign up using the same email to claim their account.</p>
+
+                    <form method="POST" action="dashboard.php?view=customers">
+                        <input type="hidden" name="action" value="add_customer">
+                        <div class="form-group">
+                            <label for="ac_full_name">Full Name</label>
+                            <input type="text" id="ac_full_name" name="full_name" required maxlength="255"
+                                   placeholder="e.g. Juan Dela Cruz">
+                        </div>
+                        <div class="form-group">
+                            <label for="ac_email">Email</label>
+                            <input type="email" id="ac_email" name="email" required maxlength="100"
+                                   placeholder="e.g. juan@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="ac_contact">Contact Number</label>
+                            <input type="text" id="ac_contact" name="contact_number" maxlength="15"
+                                   placeholder="e.g. 09171234567">
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('addCustomerModal')">Cancel</button>
+                            <button type="submit" class="btn-submit">
+                                <i class="fas fa-plus"></i> Create Customer
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Edit Customer Modal -->
+            <div class="modal-overlay" id="editCustomerModal" onclick="if(event.target===this)closeModal('editCustomerModal')">
+                <div class="modal">
+                    <h2><i class="fas fa-user-edit"></i> Edit Customer</h2>
+                    <p class="modal-subtitle">Update this customer's contact details. Changing the email also updates their login (if any).</p>
+
+                    <form method="POST" action="dashboard.php?view=customers<?= $cust_search !== '' ? '&q=' . urlencode($cust_search) : '' ?>">
+                        <input type="hidden" name="action" value="edit_customer">
+                        <input type="hidden" name="customer_id" id="ec_id">
+                        <div class="form-group">
+                            <label for="ec_full_name">Full Name</label>
+                            <input type="text" id="ec_full_name" name="full_name" required maxlength="255">
+                        </div>
+                        <div class="form-group">
+                            <label for="ec_email">Email</label>
+                            <input type="email" id="ec_email" name="email" required maxlength="100">
+                        </div>
+                        <div class="form-group">
+                            <label for="ec_contact">Contact Number</label>
+                            <input type="text" id="ec_contact" name="contact_number" maxlength="15">
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('editCustomerModal')">Cancel</button>
+                            <button type="submit" class="btn-submit">
+                                <i class="fas fa-save"></i> Save Changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <script>
+                function openModal(id) {
+                    document.getElementById(id).classList.add('open');
+                    document.body.style.overflow = 'hidden';
+                }
+                function closeModal(id) {
+                    document.getElementById(id).classList.remove('open');
+                    document.body.style.overflow = '';
+                }
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+                        document.body.style.overflow = '';
+                    }
+                });
+                function openEditCustomer(c) {
+                    document.getElementById('ec_id').value        = c.id;
+                    document.getElementById('ec_full_name').value = c.name || '';
+                    document.getElementById('ec_email').value     = c.email || '';
+                    document.getElementById('ec_contact').value   = c.contact || '';
+                    openModal('editCustomerModal');
+                }
+            </script>
+
         <?php elseif ($view === 'admins'): ?>
             <!-- ══════════════════════ ADMIN MANAGEMENT VIEW ══════════════════════ -->
             <div class="glass-panel">
@@ -2653,8 +3430,8 @@ if ($view === 'customers') {
                         admin account<?= count($admins) !== 1 ? 's' : '' ?>
                     </span>
                     <div class="toolbar-actions">
-                        <button type="button" class="btn-action btn-secondary" onclick="openModal('changePwModal')">
-                            <i></i> Change My Password
+                        <button type="button" onclick="openModal('changePwModal')">
+                            <i></i>Change My Password
                         </button>
                         <button type="button" class="btn-action" onclick="openModal('addAdminModal')">
                             <i></i> Add Admin
@@ -2780,22 +3557,49 @@ if ($view === 'customers') {
             <!-- Change Password Modal -->
             <div class="modal-overlay" id="changePwModal" onclick="if(event.target===this)closeModal('changePwModal')">
                 <div class="modal">
-                    <h2><i class="fas fa-key"></i> Change My Password</h2>
+                    <h2><i></i>Change My Password</h2>
                     <p class="modal-subtitle">Update the password for <strong><?= htmlspecialchars($current_admin['username']) ?></strong>.</p>
 
                     <form method="POST" action="dashboard.php?view=admins">
                         <input type="hidden" name="action" value="change_password">
                         <div class="form-group">
                             <label for="cp_current">Current Password</label>
-                            <input type="password" id="cp_current" name="current_password" required autocomplete="current-password">
+                            <div class="password-field">
+                                <input type="password" id="cp_current" name="current_password"
+                                       required autocomplete="current-password">
+                                <button type="button" class="password-toggle"
+                                        data-target="cp_current"
+                                        aria-label="Show password" aria-pressed="false"
+                                        title="Show password">
+                                    <i class="fas fa-eye" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="cp_new">New Password</label>
-                            <input type="password" id="cp_new" name="new_password" required minlength="8" autocomplete="new-password">
+                            <div class="password-field">
+                                <input type="password" id="cp_new" name="new_password"
+                                       required minlength="8" autocomplete="new-password">
+                                <button type="button" class="password-toggle"
+                                        data-target="cp_new"
+                                        aria-label="Show password" aria-pressed="false"
+                                        title="Show password">
+                                    <i class="fas fa-eye" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="cp_confirm">Confirm New Password</label>
-                            <input type="password" id="cp_confirm" name="confirm_password" required minlength="8" autocomplete="new-password">
+                            <div class="password-field">
+                                <input type="password" id="cp_confirm" name="confirm_password"
+                                       required minlength="8" autocomplete="new-password">
+                                <button type="button" class="password-toggle"
+                                        data-target="cp_confirm"
+                                        aria-label="Show password" aria-pressed="false"
+                                        title="Show password">
+                                    <i class="fas fa-eye" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="modal-info" style="margin-top:0.6rem;">
                             <i style="color:var(--primary);margin-right:0px;"></i>
@@ -2826,6 +3630,60 @@ if ($view === 'customers') {
                         document.body.style.overflow = '';
                     }
                 });
+
+                /* ─────────────────────────────────────────────────────
+                   Show / Hide password toggle
+                   ─────────────────────────────────────────────────────
+                   Each .password-toggle button carries data-target="<input id>".
+                   Clicking flips the input's `type` between "password" and
+                   "text", swaps the eye / eye-slash icon, and updates the
+                   ARIA state for screen readers. No page refresh, no impact
+                   on form submission — the value is still hashed server-side
+                   via password_hash().                                       */
+                document.querySelectorAll('.password-toggle').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        var input = document.getElementById(btn.dataset.target);
+                        if (!input) return;
+                        var icon = btn.querySelector('i');
+                        var showing = input.type === 'text';
+
+                        if (showing) {
+                            input.type = 'password';
+                            if (icon) { icon.classList.remove('fa-eye-slash'); icon.classList.add('fa-eye'); }
+                            btn.setAttribute('aria-pressed', 'false');
+                            btn.setAttribute('aria-label', 'Show password');
+                            btn.setAttribute('title', 'Show password');
+                        } else {
+                            input.type = 'text';
+                            if (icon) { icon.classList.remove('fa-eye'); icon.classList.add('fa-eye-slash'); }
+                            btn.setAttribute('aria-pressed', 'true');
+                            btn.setAttribute('aria-label', 'Hide password');
+                            btn.setAttribute('title', 'Hide password');
+                        }
+                    });
+                });
+
+                /* When the Change Password modal is closed, reset every
+                   password field back to hidden so the next open is clean. */
+                (function () {
+                    var modal = document.getElementById('changePwModal');
+                    if (!modal) return;
+                    var observer = new MutationObserver(function () {
+                        if (!modal.classList.contains('open')) {
+                            modal.querySelectorAll('.password-field input').forEach(function (inp) {
+                                inp.type = 'password';
+                            });
+                            modal.querySelectorAll('.password-toggle').forEach(function (btn) {
+                                var icon = btn.querySelector('i');
+                                if (icon) { icon.classList.remove('fa-eye-slash'); icon.classList.add('fa-eye'); }
+                                btn.setAttribute('aria-pressed', 'false');
+                                btn.setAttribute('aria-label', 'Show password');
+                                btn.setAttribute('title', 'Show password');
+                            });
+                        }
+                    });
+                    observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+                })();
             </script>
 
         <?php else: ?>
@@ -2836,15 +3694,33 @@ if ($view === 'customers') {
                 <?php
                     $statuses = ['All','Pending','Confirmed','Completed','Cancelled'];
                     $filter_classes = ['All'=>'','Pending'=>'f-pending','Confirmed'=>'f-confirmed','Completed'=>'f-completed','Cancelled'=>'f-cancelled'];
+                    $month_names_full = ['January','February','March','April','May','June',
+                                         'July','August','September','October','November','December'];
+                    $has_date_filter = ($allowed_res_month !== null || $allowed_res_year !== null);
+
+                    // Persist current status across the date-filter form so admins
+                    // don't lose their place when switching months.
+                    $persist_status_qs = ($filter_status !== 'All') ? '&status=' . urlencode($filter_status) : '';
                 ?>
                 <div class="filter-bar">
                     <span><i class="fas fa-filter"></i> Filter:</span>
                     <?php foreach ($statuses as $s):
                         $is_active = ($filter_status === $s);
-                        $url = 'dashboard.php' . ($s !== 'All' ? '?status=' . urlencode($s) : '');
+                        // Preserve the current month/year filter while switching status.
+                        $url_qs = [];
+                        if ($s !== 'All')                  $url_qs[] = 'status=' . urlencode($s);
+                        if ($allowed_res_month !== null)   $url_qs[] = 'res_month=' . $allowed_res_month;
+                        if ($allowed_res_year  !== null)   $url_qs[] = 'res_year='  . $allowed_res_year;
+                        $url = 'dashboard.php' . (count($url_qs) ? '?' . implode('&', $url_qs) : '');
+
+                        // Per-status counter respects the active month/year filter.
                         $cnt = null;
                         if ($s !== 'All') {
-                            $cnt = $pdo->query("SELECT COUNT(*) FROM reservations r WHERE r.status = " . $pdo->quote($s) . " AND NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')")->fetchColumn();
+                            $cnt_where = "WHERE r.status = " . $pdo->quote($s)
+                                       . " AND NOT (r.status = 'Pending' AND r.payment_status = 'Unpaid')";
+                            if ($allowed_res_month !== null) $cnt_where .= " AND MONTH(r.reservation_date) = " . (int)$allowed_res_month;
+                            if ($allowed_res_year  !== null) $cnt_where .= " AND YEAR(r.reservation_date)  = " . (int)$allowed_res_year;
+                            $cnt = $pdo->query("SELECT COUNT(*) FROM reservations r $cnt_where")->fetchColumn();
                         }
                     ?>
                         <a href="<?= $url ?>" class="filter-btn <?= $filter_classes[$s] ?> <?= $is_active ? 'active' : '' ?>">
@@ -2852,6 +3728,37 @@ if ($view === 'customers') {
                         </a>
                     <?php endforeach; ?>
                     <span style="font-size:0.82rem;color:#999;margin-left:4px;"><?= $total_rows ?> record<?= $total_rows != 1 ? 's' : '' ?></span>
+
+                    <!-- Compact Month/Year filter -->
+                    <form method="GET" action="dashboard.php" class="res-date-filter">
+                        <?php if ($filter_status !== 'All'): ?>
+                            <input type="hidden" name="status" value="<?= htmlspecialchars($filter_status) ?>">
+                        <?php endif; ?>
+                        <span class="rd-label">
+                            <i class="fas fa-calendar-alt"></i> Date:
+                        </span>
+                        <select name="res_month" aria-label="Month">
+                            <option value="All" <?= $allowed_res_month === null ? 'selected' : '' ?>>Any Month</option>
+                            <?php for ($m = 1; $m <= 12; $m++): ?>
+                                <option value="<?= $m ?>" <?= $allowed_res_month === $m ? 'selected' : '' ?>>
+                                    <?= $month_names_full[$m - 1] ?>
+                                </option>
+                            <?php endfor; ?>
+                        </select>
+                        <select name="res_year" aria-label="Year">
+                            <option value="All" <?= $allowed_res_year === null ? 'selected' : '' ?>>Any Year</option>
+                            <?php foreach ($res_year_list as $y): ?>
+                                <option value="<?= $y ?>" <?= $allowed_res_year === $y ? 'selected' : '' ?>><?= $y ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button type="submit"><i class="fas fa-search"></i> Apply</button>
+                        <?php if ($has_date_filter): ?>
+                            <a href="dashboard.php<?= $persist_status_qs ? '?' . ltrim($persist_status_qs, '&') : '' ?>"
+                               class="rd-reset" title="Clear date filter">
+                                <i class="fas fa-times"></i> Clear
+                            </a>
+                        <?php endif; ?>
+                    </form>
                 </div>
 
                 <div style="overflow-x: auto;">
@@ -2902,7 +3809,11 @@ if ($view === 'customers') {
                 </div>
 
                 <?php if ($total_pages > 1):
-                    $sp = ($filter_status !== 'All') ? '&status=' . urlencode($filter_status) : '';
+                    $sp_parts = [];
+                    if ($filter_status !== 'All')        $sp_parts[] = 'status='    . urlencode($filter_status);
+                    if ($allowed_res_month !== null)     $sp_parts[] = 'res_month=' . $allowed_res_month;
+                    if ($allowed_res_year  !== null)     $sp_parts[] = 'res_year='  . $allowed_res_year;
+                    $sp = $sp_parts ? '&' . implode('&', $sp_parts) : '';
                 ?>
                 <div class="pagination">
                     <a href="dashboard.php?page=<?= $current_page-1 . $sp ?>" class="page-btn <?= $current_page<=1?'disabled':'' ?>">

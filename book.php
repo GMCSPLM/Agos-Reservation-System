@@ -69,6 +69,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$postBranchId || !$postDate || !$postType) {
         $bookingError = "Invalid booking data. Please fill in all fields and try again.";
     } else {
+        /* ── Same-day booking guard ─────────────────────────────────────────
+         * Same-day reservations are not allowed — guests must book at
+         * least one day in advance. This is enforced server-side first
+         * (the `min` attribute on the date input is only a UX hint and
+         * can be bypassed by a hand-crafted POST).
+         * ----------------------------------------------------------------- */
+        $todayYmd      = date('Y-m-d');
+        $tomorrowLabel = date('F j, Y', strtotime('+1 day'));
+        $postTs        = strtotime($postDate);
+        if ($postTs === false) {
+            $bookingError = "Please choose a valid check-in date.";
+        } elseif ($postDate <= $todayYmd) {
+            $bookingError = "Same-day bookings are not allowed. The earliest available "
+                          . "check-in date is <strong>" . htmlspecialchars($tomorrowLabel)
+                          . "</strong>. Please choose a later date.";
+        }
+    }
+
+    // Continue with the remaining checks only if no error has been raised yet.
+    if (!$bookingError && $postBranchId && $postDate && $postType) {
         /* ── Branch-availability guard ──────────────────────────────────────
          * Defense-in-depth. Stops:
          *   • Direct POSTs to book.php that bypass the dropdown
@@ -125,6 +145,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $preselectedBranch = $_GET['branch'] ?? null;
 $preselectedDate   = $_GET['date']   ?? null;
 $preselectedBranch = (is_numeric($preselectedBranch)) ? intval($preselectedBranch) : null;
+
+/* Same-day bookings are not allowed: if the URL prefilled today or an
+ * earlier date (e.g. from a stale calendar link), strip it. The `min`
+ * attribute on the date input will then default to the earliest
+ * allowable day (tomorrow). */
+if ($preselectedDate !== null) {
+    $todayYmd = date('Y-m-d');
+    if (strtotime($preselectedDate) === false || $preselectedDate <= $todayYmd) {
+        $preselectedDate = null;
+    }
+}
 
 /* If the customer arrived via a link to an unavailable branch (e.g. a stale
  * bookmark, or an admin disabled it after the link was shared), keep them
@@ -556,6 +587,23 @@ if ($initialSliderBranchId !== null) {
     background: #fff;
     box-shadow: 0 0 0 3px rgba(0,119,182,0.11);
 }
+
+/* Inline helper note shown beneath an input (e.g. "no same-day bookings"). */
+.bk-field-note {
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    color: #856404;
+    background: rgba(255, 193, 7, 0.10);
+    border-left: 3px solid #ffc107;
+    border-radius: 6px;
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    line-height: 1.45;
+}
+.bk-field-note i { color: #b08800; flex-shrink: 0; margin-top: 2px; }
+.bk-field-note strong { color: #6b4d00; }
 
 /* Custom select arrow */
 .bk-select-wrap { position: relative; }
@@ -1039,9 +1087,14 @@ if ($initialSliderBranchId !== null) {
                             id="fieldDate"
                             class="bk-input"
                             required
-                            min="<?= date('Y-m-d') ?>"
+                            min="<?= date('Y-m-d', strtotime('+1 day')) ?>"
                             value="<?= htmlspecialchars($preselectedDate ?? '') ?>"
                         >
+                        <p class="bk-field-note">
+                            <i class="fas fa-info-circle"></i>
+                            Same-day bookings are not allowed &mdash; the earliest available
+                            date is <strong><?= date('F j, Y', strtotime('+1 day')) ?></strong>.
+                        </p>
                 </div>
 
                 <!-- ── 3. Tour Type ── -->

@@ -454,7 +454,7 @@ if ($nextMonth > 12) {
     position: relative;
 }
 
-.calendar-day:hover:not(.day-past):not(.day-booked) {
+.calendar-day:hover:not(.day-past):not(.day-booked):not(.day-today) {
     transform: translateY(-3px);
     box-shadow: 0 8px 20px rgba(0,0,0,0.15);
     cursor: pointer;
@@ -527,6 +527,33 @@ if ($nextMonth > 12) {
     color: white;
 }
 
+/* Today — visually distinct so guests can find it on the grid, but locked
+ * (cursor: not-allowed) because same-day bookings are not permitted. */
+.day-today {
+    background: linear-gradient(135deg, #fff8e1 0%, #ffe0b2 100%);
+    color: #6b3e00;
+    border: 2px dashed #f39c12;
+    cursor: not-allowed;
+    position: relative;
+}
+.day-today::after {
+    content: 'TODAY';
+    position: absolute;
+    top: 4px; right: 6px;
+    font-size: 0.55rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #b06d00;
+    background: rgba(243,156,18,0.18);
+    padding: 2px 6px;
+    border-radius: 50px;
+}
+.day-today .day-status {
+    background: #f39c12;
+    color: white;
+    font-size: 0.72rem;
+}
+
 .day-limited {
     background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
     color: #e65100;
@@ -582,6 +609,12 @@ if ($nextMonth > 12) {
 .legend-past {
     background: #f5f5f5;
     border-color: #e0e0e0;
+}
+
+.legend-today {
+    background: #fff8e1;
+    border-color: #f39c12;
+    border-style: dashed;
 }
 
 .booking-count {
@@ -835,21 +868,531 @@ if ($nextMonth > 12) {
     </div>
 </section>
 
-<section class="container" style="padding-top: 4rem;">
-    <h2 class="section-title">Resort Amenities</h2>
-    <div class="grid">
-        <?php foreach($amenities as $a): ?>
-            <div class="card" style="border-left: 4px solid var(--secondary);">
-                <div class="card-content">
-                    <h3><?= htmlspecialchars($a['amenity_name']) ?></h3>
-                    <small style="color: #888; text-transform: uppercase;"><?= htmlspecialchars($a['branch_name']) ?></small>
-                    <p style="margin-top: 10px;"><?= htmlspecialchars($a['description']) ?></p>
-                    <span style="background: #e0f7fa; color: #006064; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;"><?= $a['availability'] ?></span>
-                </div>
-            </div>
-        <?php endforeach; ?>
+<?php
+    // ─── Resort Amenities — group by branch for the dropdown filter + 6/page pagination ──
+    // Build a list of branches that actually have amenities (so the dropdown
+    // never shows an empty option), and a parallel array of amenities indexed
+    // by branch_id. Pagination is handled client-side for a smooth UX (no
+    // full page reload when changing branch / page).
+    $amenityBranchList = [];   // [{id, name}, …] — branches that appear in the dropdown
+    $amenitiesByBranch = [];   // [branch_id => [ {amenity_name, description, availability}, … ]]
+    foreach ($amenities as $a) {
+        $bid = (int)$a['branch_id'];
+        if (!isset($amenitiesByBranch[$bid])) {
+            $amenitiesByBranch[$bid] = [];
+            $amenityBranchList[] = [
+                'id'   => $bid,
+                'name' => $a['branch_name'],
+            ];
+        }
+        $amenitiesByBranch[$bid][] = $a;
+    }
+
+    // Sort each branch's items: Available first, then alphabetical.
+    foreach ($amenitiesByBranch as $bid => $items) {
+        usort($items, function ($x, $y) {
+            $xa = ($x['availability'] === 'Available') ? 0 : 1;
+            $ya = ($y['availability'] === 'Available') ? 0 : 1;
+            if ($xa !== $ya) return $xa <=> $ya;
+            return strcasecmp($x['amenity_name'], $y['amenity_name']);
+        });
+        $amenitiesByBranch[$bid] = $items;
+    }
+    // Sort the dropdown list alphabetically too.
+    usort($amenityBranchList, fn($a, $b) => strcasecmp($a['name'], $b['name']));
+
+    // Pick a representative icon based on the amenity's name. Pure cosmetic
+    // — keeps the data model schema-clean (no icon column needed).
+    if (!function_exists('amenity_icon_index')) {
+        function amenity_icon_index(string $name): string {
+            $n = strtolower($name);
+            if (str_contains($n, 'pool') || str_contains($n, 'swim'))  return 'fa-swimming-pool';
+            if (str_contains($n, 'wifi') || str_contains($n, 'inter')) return 'fa-wifi';
+            if (str_contains($n, 'parking') || str_contains($n, 'car'))return 'fa-square-parking';
+            if (str_contains($n, 'gym') || str_contains($n, 'fitness'))return 'fa-dumbbell';
+            if (str_contains($n, 'spa') || str_contains($n, 'massage'))return 'fa-spa';
+            if (str_contains($n, 'restaurant') || str_contains($n, 'dining') || str_contains($n, 'food')) return 'fa-utensils';
+            if (str_contains($n, 'bar') || str_contains($n, 'drink'))  return 'fa-martini-glass';
+            if (str_contains($n, 'basketball'))                        return 'fa-basketball';
+            if (str_contains($n, 'billiard') || str_contains($n, 'pool table')) return 'fa-circle';
+            if (str_contains($n, 'video') || str_contains($n, 'karao') || str_contains($n, 'song')) return 'fa-microphone';
+            if (str_contains($n, 'play') || str_contains($n, 'kid'))   return 'fa-child';
+            if (str_contains($n, 'beach'))                             return 'fa-umbrella-beach';
+            if (str_contains($n, 'garden') || str_contains($n, 'park'))return 'fa-tree';
+            if (str_contains($n, 'air') || str_contains($n, 'aircon')) return 'fa-snowflake';
+            if (str_contains($n, 'tv') || str_contains($n, 'cable'))   return 'fa-tv';
+            return 'fa-star';
+        }
+    }
+
+    $AMENITY_PAGE_SIZE = 6;
+?>
+
+<style>
+/* ─── Resort Amenities Section ───────────────────────────────────────────── */
+.amenities-section {
+    padding-top: 4rem;
+    padding-bottom: 1rem;
+}
+.amenities-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+.amenities-header .section-title {
+    margin: 0;
+    text-align: center;
+    width: 100%;
+}
+
+.amenity-filter {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: white;
+    padding: 6px 6px 6px 18px;
+    border-radius: 50px;
+    box-shadow: 0 4px 18px rgba(0, 119, 182, 0.10);
+    border: 1.5px solid rgba(0, 119, 182, 0.18);
+}
+.amenity-filter label {
+    font-size: 0.82rem; font-weight: 600;
+    color: #475569;
+    display: inline-flex; align-items: center; gap: 7px;
+    white-space: nowrap;
+}
+.amenity-filter label i { color: var(--primary); font-size: 0.88rem; }
+.amenity-filter select {
+    appearance: none; -webkit-appearance: none;
+    background: var(--primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='white' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") no-repeat right 14px center;
+    color: white;
+    border: none;
+    padding: 9px 36px 9px 18px;
+    border-radius: 50px;
+    font-size: 0.86rem; font-weight: 600;
+    cursor: pointer; outline: none;
+    font-family: inherit;
+    transition: filter 0.18s, box-shadow 0.18s;
+    box-shadow: 0 3px 10px rgba(0, 119, 182, 0.28);
+    min-width: 180px;
+}
+.amenity-filter select:hover, .amenity-filter select:focus {
+    filter: brightness(1.08);
+    box-shadow: 0 5px 14px rgba(0, 119, 182, 0.35);
+}
+.amenity-filter select option {
+    background: white; color: #2c3e50;
+}
+
+/* Each branch lives in its own panel; only the active one is shown. */
+.amenity-branch-panel { display: none; animation: amFade 0.32s ease-out; }
+.amenity-branch-panel.is-active { display: block; }
+@keyframes amFade {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* The grid of cards — three columns on desktop, two on tablet, one on phone. */
+.amenity-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 1.8rem;
+}
+
+/* Individual amenity card. */
+.amenity-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+    border: 1px solid rgba(0, 119, 182, 0.12);
+    border-radius: 18px;
+    padding: 1.4rem 1.4rem 1.5rem;
+    display: flex; flex-direction: column; gap: 12px;
+    position: relative;
+    transition: transform 0.22s, box-shadow 0.22s, border-color 0.22s;
+    overflow: hidden;
+}
+.amenity-card::before {
+    content: '';
+    position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: linear-gradient(180deg, var(--secondary) 0%, var(--primary) 100%);
+    transition: width 0.22s;
+}
+.amenity-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px rgba(0, 119, 182, 0.14);
+    border-color: rgba(0, 119, 182, 0.26);
+}
+.amenity-card:hover::before { width: 6px; }
+
+.amenity-card-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px;
+}
+.amenity-icon {
+    width: 46px; height: 46px; border-radius: 12px;
+    background: linear-gradient(135deg, rgba(0,119,182,0.13) 0%, rgba(0,180,216,0.13) 100%);
+    color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.18rem; flex-shrink: 0;
+    transition: transform 0.22s;
+}
+.amenity-card:hover .amenity-icon { transform: scale(1.06) rotate(-3deg); }
+
+.amenity-status {
+    font-size: 0.68rem; font-weight: 700;
+    padding: 4px 11px; border-radius: 50px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    display: inline-flex; align-items: center; gap: 5px;
+    white-space: nowrap;
+}
+.amenity-status.s-on  { background: rgba(40,167,69,0.15);  color: #1e7d36; }
+.amenity-status.s-off { background: rgba(231,76,60,0.15);  color: #b03a2e; }
+.amenity-status i { font-size: 0.62rem; }
+
+.amenity-card h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--primary-dark);
+    font-weight: 700;
+    line-height: 1.3;
+}
+.amenity-card p {
+    margin: 0;
+    font-size: 0.86rem;
+    color: #555;
+    line-height: 1.55;
+    flex: 1;
+}
+.amenity-card .am-empty { color: #aaa; font-style: italic; font-size: 0.85rem; }
+
+.amenity-card.is-unavail {
+    background: linear-gradient(135deg, #fafafa 0%, #f3f4f7 100%);
+    border-color: rgba(231, 76, 60, 0.18);
+}
+.amenity-card.is-unavail::before {
+    background: linear-gradient(180deg, #e74c3c 0%, #c0392b 100%);
+}
+.amenity-card.is-unavail .amenity-icon {
+    background: linear-gradient(135deg, rgba(231,76,60,0.13) 0%, rgba(231,76,60,0.07) 100%);
+    color: #c0392b;
+    filter: grayscale(15%);
+}
+.amenity-card.is-unavail h3 { color: #6b6b6b; }
+.amenity-card.is-unavail p  { color: #888; }
+
+/* Empty state ("No amenities for this branch"). */
+.amenity-empty {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    background: white;
+    border-radius: 18px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+    color: #888;
+}
+.amenity-empty i {
+    font-size: 2.6rem;
+    color: var(--primary);
+    opacity: 0.55;
+    margin-bottom: 0.8rem;
+}
+.amenity-empty h3 {
+    color: var(--primary-dark);
+    font-size: 1.1rem;
+    margin: 0 0 0.3rem;
+}
+.amenity-empty p { margin: 0; font-size: 0.92rem; }
+
+/* Pagination — only shown when items > page size.
+ * The * width: auto / flex: 0 0 auto / box-sizing rules are intentional:
+ * header.php / style.css can ship a global `button { width: 100% }` or
+ * `form button` rule (we've seen this on other pages) that would otherwise
+ * stretch each pagination button to fill the row. These resets keep the
+ * buttons compact regardless of the host page's button styles.            */
+.amenity-pagination {
+    display: flex; justify-content: center; align-items: center;
+    gap: 8px; flex-wrap: wrap; margin-top: 0.6rem;
+}
+.amenity-pagination .ap-btn {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 40px;
+    height: 40px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    border: 1.5px solid #d8dee6;
+    background: white;
+    color: #475569;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.18s, color 0.18s, background 0.18s, box-shadow 0.18s, transform 0.15s;
+    font-family: inherit;
+    line-height: 1;
+}
+.amenity-pagination .ap-btn:hover:not(.is-disabled):not(.is-active) {
+    border-color: var(--primary);
+    color: var(--primary);
+    transform: translateY(-1px);
+}
+.amenity-pagination .ap-btn.is-active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+    box-shadow: 0 3px 10px rgba(0, 119, 182, 0.3);
+    cursor: default;
+}
+.amenity-pagination .ap-btn.is-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.amenity-pagination .ap-btn i { font-size: 0.78rem; line-height: 1; }
+.amenity-pagination .ap-info {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-left: 10px;
+    white-space: nowrap;
+    align-self: center;
+}
+.amenity-pagination .ap-ellipsis {
+    color: #aaa;
+    padding: 0 4px;
+    user-select: none;
+    align-self: center;
+    font-weight: 700;
+}
+
+@media (max-width: 960px) {
+    .amenity-grid { grid-template-columns: repeat(2, 1fr); gap: 1.1rem; }
+}
+@media (max-width: 600px) {
+    .amenity-filter select { min-width: 0; max-width: 100%; }
+    .amenity-grid { grid-template-columns: 1fr; }
+    .amenity-pagination { gap: 6px; }
+    .amenity-pagination .ap-btn { min-width: 36px; height: 36px; font-size: 0.85rem; }
+    .amenity-pagination .ap-info { width: 100%; text-align: center; margin-left: 0; margin-top: 4px; }
+}
+</style>
+
+<section class="container amenities-section">
+    <div class="amenities-header">
+        <h2 class="section-title">Resort Amenities</h2>
+
+        <?php if (!empty($amenityBranchList)): ?>
+        <div class="amenity-filter">
+            <label for="amenityBranchSelect">
+                <i class="fas fa-building"></i> View by Branch:
+            </label>
+            <select id="amenityBranchSelect" aria-label="Filter amenities by branch">
+                <?php foreach ($amenityBranchList as $i => $br): ?>
+                    <option value="<?= (int)$br['id'] ?>" <?= $i === 0 ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($br['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <?php endif; ?>
     </div>
+
+    <?php if (empty($amenityBranchList)): ?>
+        <!-- No amenities at all in the system. -->
+        <div class="amenity-empty">
+            <i class="fas fa-umbrella-beach"></i>
+            <h3>No amenities available</h3>
+            <p>Our team is still setting up. Please check back soon!</p>
+        </div>
+    <?php else: ?>
+        <?php foreach ($amenityBranchList as $i => $br):
+            $bid   = (int)$br['id'];
+            $items = $amenitiesByBranch[$bid] ?? [];
+            $count = count($items);
+        ?>
+        <div class="amenity-branch-panel <?= $i === 0 ? 'is-active' : '' ?>"
+             data-branch-id="<?= $bid ?>"
+             data-branch-name="<?= htmlspecialchars($br['name']) ?>"
+             data-total="<?= $count ?>"
+             data-page-size="<?= $AMENITY_PAGE_SIZE ?>">
+
+            <?php if ($count === 0): ?>
+                <div class="amenity-empty">
+                    <i class="fas fa-info-circle"></i>
+                    <h3>No amenities available</h3>
+                    <p>This branch hasn't listed any amenities yet.</p>
+                </div>
+            <?php else: ?>
+                <div class="amenity-grid">
+                    <?php foreach ($items as $idx => $am):
+                        $isAvail   = ($am['availability'] === 'Available');
+                        $iconCls   = amenity_icon_index($am['amenity_name']);
+                        // Tag each card with its index inside the branch so JS can
+                        // hide / show ranges based on the current page.
+                        $itemIndex = $idx;
+                    ?>
+                        <article class="amenity-card <?= $isAvail ? '' : 'is-unavail' ?>"
+                                 data-item-index="<?= $itemIndex ?>">
+                            <div class="amenity-card-head">
+                                <div class="amenity-icon"><i class="fas <?= $iconCls ?>"></i></div>
+                                <span class="amenity-status <?= $isAvail ? 's-on' : 's-off' ?>">
+                                    <i class="fas <?= $isAvail ? 'fa-check-circle' : 'fa-tools' ?>"></i>
+                                    <?= $isAvail ? 'Available' : 'Unavailable' ?>
+                                </span>
+                            </div>
+                            <h3><?= htmlspecialchars($am['amenity_name']) ?></h3>
+                            <?php if (!empty($am['description'])): ?>
+                                <p><?= htmlspecialchars($am['description']) ?></p>
+                            <?php else: ?>
+                                <p class="am-empty">
+                                    <?= $isAvail
+                                        ? 'Available for all guests during your stay.'
+                                        : 'Currently undergoing maintenance.' ?>
+                                </p>
+                            <?php endif; ?>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Pagination is rendered by JS based on current page state.
+                     Hidden when the branch has <= page-size items. -->
+                <div class="amenity-pagination" data-pagination-for="<?= $bid ?>"></div>
+            <?php endif; ?>
+        </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
 </section>
+
+<script>
+/* ─── Resort Amenities — branch filter + per-branch pagination ────────────
+ * All branch panels are rendered server-side; this script only controls
+ * which panel is visible and which slice of cards within that panel is
+ * shown. No page reload is needed when switching branches or pages.
+ * ----------------------------------------------------------------------- */
+(function () {
+    const select = document.getElementById('amenityBranchSelect');
+    if (!select) return;   // page has no amenities at all
+
+    const panels = document.querySelectorAll('.amenity-branch-panel');
+    // Track the active page per branch so switching branches and back
+    // preserves the page the user was on.
+    const branchPage = {};
+    panels.forEach(p => { branchPage[p.dataset.branchId] = 1; });
+
+    function renderPagination(panel) {
+        const container = panel.querySelector('.amenity-pagination');
+        if (!container) return;
+
+        const total    = parseInt(panel.dataset.total, 10) || 0;
+        const pageSize = parseInt(panel.dataset.pageSize, 10) || 6;
+        const pages    = Math.max(1, Math.ceil(total / pageSize));
+        const branchId = panel.dataset.branchId;
+        const current  = branchPage[branchId] || 1;
+
+        // No pagination needed if everything fits on one page.
+        if (pages <= 1) { container.innerHTML = ''; return; }
+
+        const parts = [];
+        // Prev
+        parts.push(
+          `<button type="button" class="ap-btn ap-prev ${current <= 1 ? 'is-disabled' : ''}"
+                  data-page="${current - 1}" aria-label="Previous page">
+              <i class="fas fa-chevron-left"></i>
+           </button>`
+        );
+
+        // Sliding window of page numbers (max 5 visible) with ellipsis
+        const win = 2;
+        let lo = Math.max(1, current - win);
+        let hi = Math.min(pages, current + win);
+        if (lo > 1) {
+            parts.push(`<button type="button" class="ap-btn" data-page="1">1</button>`);
+            if (lo > 2) parts.push(`<span class="ap-ellipsis">…</span>`);
+        }
+        for (let p = lo; p <= hi; p++) {
+            parts.push(
+              `<button type="button" class="ap-btn ${p === current ? 'is-active' : ''}"
+                      data-page="${p}">${p}</button>`
+            );
+        }
+        if (hi < pages) {
+            if (hi < pages - 1) parts.push(`<span class="ap-ellipsis">…</span>`);
+            parts.push(`<button type="button" class="ap-btn" data-page="${pages}">${pages}</button>`);
+        }
+
+        // Next
+        parts.push(
+          `<button type="button" class="ap-btn ap-next ${current >= pages ? 'is-disabled' : ''}"
+                  data-page="${current + 1}" aria-label="Next page">
+              <i class="fas fa-chevron-right"></i>
+           </button>`
+        );
+        parts.push(`<span class="ap-info">Page ${current} of ${pages}</span>`);
+
+        container.innerHTML = parts.join('');
+    }
+
+    function applyPage(panel) {
+        const pageSize = parseInt(panel.dataset.pageSize, 10) || 6;
+        const branchId = panel.dataset.branchId;
+        const page     = branchPage[branchId] || 1;
+        const start    = (page - 1) * pageSize;
+        const end      = start + pageSize;
+
+        panel.querySelectorAll('.amenity-card').forEach(card => {
+            const idx = parseInt(card.dataset.itemIndex, 10);
+            card.style.display = (idx >= start && idx < end) ? '' : 'none';
+        });
+        renderPagination(panel);
+    }
+
+    function showBranch(branchId) {
+        let activePanel = null;
+        panels.forEach(p => {
+            const isMatch = (p.dataset.branchId === String(branchId));
+            p.classList.toggle('is-active', isMatch);
+            if (isMatch) activePanel = p;
+        });
+        if (activePanel) applyPage(activePanel);
+    }
+
+    // Wire up the dropdown.
+    select.addEventListener('change', e => showBranch(e.target.value));
+
+    // Pagination clicks (event-delegated so re-rendering doesn't lose handlers).
+    document.querySelectorAll('.amenity-pagination').forEach(container => {
+        container.addEventListener('click', e => {
+            const btn = e.target.closest('.ap-btn');
+            if (!btn || btn.classList.contains('is-disabled')) return;
+            const panel = btn.closest('.amenity-branch-panel');
+            if (!panel) return;
+            const newPage = parseInt(btn.dataset.page, 10);
+            if (!Number.isFinite(newPage) || newPage < 1) return;
+
+            branchPage[panel.dataset.branchId] = newPage;
+            applyPage(panel);
+
+            // Keep the section roughly in view when paging on long pages,
+            // without jarring full-page jumps.
+            const sec = panel.closest('.amenities-section');
+            if (sec) {
+                const top = sec.getBoundingClientRect().top + window.pageYOffset - 80;
+                if (window.pageYOffset > top + 80) {
+                    window.scrollTo({ top, behavior: 'smooth' });
+                }
+            }
+        });
+    });
+
+    // Initialize: render pagination + slice for the panel that's active on load.
+    panels.forEach(p => {
+        if (p.classList.contains('is-active')) applyPage(p);
+    });
+})();
+</script>
 
 <div class="feedback-section-wrapper">
     <div class="container">
@@ -1037,9 +1580,11 @@ if ($nextMonth > 12) {
 
             // Days of the month
             $bookingsBlocked = ($globalMaintenance === 1 || empty($bookableBranches) || empty($selectedBranch));
+            $todayStr        = date('Y-m-d');
             for ($day = 1; $day <= $daysInMonth; $day++) {
                 $dateStr     = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
-                $isPast      = strtotime($dateStr) < strtotime(date('Y-m-d'));
+                $isPast      = strtotime($dateStr) < strtotime($todayStr);
+                $isToday     = ($dateStr === $todayStr);
                 $isClickable = false;
                 $slotPillsHtml  = '';
                 $extraInfoHtml  = '';
@@ -1047,6 +1592,12 @@ if ($nextMonth > 12) {
                 if ($isPast) {
                     $class      = "day-past";
                     $statusText = "Past";
+                } elseif ($isToday) {
+                    // Same-day bookings are not allowed (mirrors the rule in book.php).
+                    // Today is shown but not clickable, with a clear "Today" label so
+                    // guests understand why it's not selectable.
+                    $class      = "day-today";
+                    $statusText = "Today &mdash; Booking Closed";
                 } else {
                         // Check each reservation_type slot independently.
                         $dayBooked       = isset($slotsByDate[$dateStr]['Day']);
@@ -1107,6 +1658,10 @@ if ($nextMonth > 12) {
             <div class="legend-item">
                 <div class="legend-box legend-booked"></div>
                 <span>Fully Booked</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box legend-today"></div>
+                <span>Today (Booking Closed)</span>
             </div>
             <div class="legend-item">
                 <div class="legend-box legend-past"></div>
