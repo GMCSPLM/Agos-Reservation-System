@@ -177,12 +177,28 @@ if ($is_post && ($_POST['action'] ?? '') === 'change_password') {
 // BRANCHES MANAGEMENT — POST handlers
 // =========================================================================
 // Upload directory (relative to /admin/) — admin writes here, customer reads
-// from "/assets/branches/...".
+// from "/assets/branches/".
 $BRANCH_UPLOAD_DIR_FS  = __DIR__ . '/../assets/branches/';      // physical path
 $BRANCH_UPLOAD_DIR_WEB = 'assets/branches/';                    // value stored in DB
 if (!is_dir($BRANCH_UPLOAD_DIR_FS)) {
     @mkdir($BRANCH_UPLOAD_DIR_FS, 0775, true);
 }
+
+/* ─── Upload limits ─────────────────────────────────────────────────────────
+ * Max upload size is intentionally generous (25 MB per image). Anything
+ * larger than the resize threshold is shrunk + re-encoded server-side, so
+ * even 25 MB phone photos end up as ~150-400 KB on disk and load instantly
+ * for customers. Truly unlimited uploads are not safe — they enable cheap
+ * disk-fill DoS — but 25 MB comfortably covers high-resolution camera output.
+ *
+ * NOTE: PHP's own `upload_max_filesize` and `post_max_size` ini directives
+ * also apply. The deployment notes describe how to raise them server-wide
+ * (typical recommendation: 30M each, slightly above MAX_UPLOAD_BYTES).
+ * ------------------------------------------------------------------------- */
+const MAX_UPLOAD_BYTES   = 25 * 1024 * 1024;   // hard ceiling per file
+const MAX_GALLERY_IMAGES = 9;                  // per-branch gallery cap
+const RESIZE_LONG_EDGE   = 1920;               // optimize >1920 px to 1920 px
+const JPEG_QUALITY       = 85;                 // 85 = good quality, ~6× smaller
 
 // Helper: physically delete a file referenced from the DB.
 $deleteBranchFile = function ($webPath) {
@@ -193,6 +209,128 @@ $deleteBranchFile = function ($webPath) {
     if (strpos($webPath, 'assets/branches/') !== 0) return;
     $fs = __DIR__ . '/../' . $webPath;
     if (is_file($fs)) @unlink($fs);
+};
+
+/**
+ * Validate, optimize, and persist an uploaded image.
+ *
+ * Performs:
+ *   1. MIME + extension whitelist check
+ *   2. Size sanity check (<= MAX_UPLOAD_BYTES)
+ *   3. EXIF orientation auto-rotate (JPEG only)
+ *   4. Proportional downscale if either dimension > RESIZE_LONG_EDGE
+ *   5. Re-encode (strips EXIF, predictable file size)
+ *
+ * Returns ['ok' => true, 'web_path' => '...', 'fs_path' => '...']
+ * or      ['ok' => false, 'error' => '...'].
+ */
+$processBranchImage = function (array $file, int $branchId) use (
+    $BRANCH_UPLOAD_DIR_FS, $BRANCH_UPLOAD_DIR_WEB
+) {
+    // 1. Catch upload errors first
+    if ($file['error'] === UPLOAD_ERR_INI_SIZE || $file['error'] === UPLOAD_ERR_FORM_SIZE) {
+        return ['ok' => false, 'error' =>
+            'File exceeds the server upload limit. Increase upload_max_filesize / post_max_size in php.ini.'];
+    }
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return ['ok' => false, 'error' => 'Upload failed (error code ' . (int)$file['error'] . ').'];
+    }
+
+    // 2. Hard ceiling — 25 MB
+    if (($file['size'] ?? 0) > MAX_UPLOAD_BYTES) {
+        return ['ok' => false, 'error' => 'Image is too large (max '
+            . (int)(MAX_UPLOAD_BYTES / 1024 / 1024) . ' MB per file).'];
+    }
+
+    // 3. Type whitelist (extension AND MIME must agree)
+    $allowed = [
+        'jpg'  => 'image/jpeg', 'jpeg' => 'image/jpeg',
+        'png'  => 'image/png',  'webp' => 'image/webp',
+        'gif'  => 'image/gif',
+    ];
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!isset($allowed[$ext])) {
+        return ['ok' => false, 'error' => 'Only JPG, PNG, WEBP, and GIF images are allowed.'];
+    }
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime  = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    if (!in_array($mime, $allowed, true) || $mime !== $allowed[$ext]) {
+        return ['ok' => false, 'error' => 'File contents do not match the image extension.'];
+    }
+
+    // 4. Read the image with GD (degrade gracefully if GD is unavailable)
+    $newName = sprintf('branch-%d-%s.%s', $branchId, bin2hex(random_bytes(6)), $ext);
+    $destFs  = $BRANCH_UPLOAD_DIR_FS  . $newName;
+    $destWeb = $BRANCH_UPLOAD_DIR_WEB . $newName;
+
+    if (!extension_loaded('gd')) {
+        // GD unavailable: just move the file as-is (still validated above).
+        if (!@move_uploaded_file($file['tmp_name'], $destFs)) {
+            return ['ok' => false, 'error' => 'Could not save uploaded file. Check folder permissions.'];
+        }
+        return ['ok' => true, 'web_path' => $destWeb, 'fs_path' => $destFs];
+    }
+
+    // Load source image
+    switch ($mime) {
+        case 'image/jpeg': $src = @imagecreatefromjpeg($file['tmp_name']); break;
+        case 'image/png':  $src = @imagecreatefrompng ($file['tmp_name']); break;
+        case 'image/webp': $src = @imagecreatefromwebp($file['tmp_name']); break;
+        case 'image/gif':  $src = @imagecreatefromgif ($file['tmp_name']); break;
+        default:           $src = false;
+    }
+    if (!$src) {
+        return ['ok' => false, 'error' => 'Could not read the uploaded image — the file may be corrupt.'];
+    }
+
+    // EXIF auto-rotate for JPEGs (so portrait phone photos display upright)
+    if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
+        $exif = @exif_read_data($file['tmp_name']);
+        if (!empty($exif['Orientation'])) {
+            switch ((int)$exif['Orientation']) {
+                case 3: $src = imagerotate($src, 180, 0); break;
+                case 6: $src = imagerotate($src, -90, 0); break;
+                case 8: $src = imagerotate($src,  90, 0); break;
+            }
+        }
+    }
+
+    $w = imagesx($src);
+    $h = imagesy($src);
+
+    // Proportional downscale if larger than max edge
+    if ($w > RESIZE_LONG_EDGE || $h > RESIZE_LONG_EDGE) {
+        $ratio = ($w >= $h) ? RESIZE_LONG_EDGE / $w : RESIZE_LONG_EDGE / $h;
+        $newW = (int)round($w * $ratio);
+        $newH = (int)round($h * $ratio);
+        $dst  = imagecreatetruecolor($newW, $newH);
+        // Preserve transparency for PNG / GIF
+        if ($mime === 'image/png' || $mime === 'image/gif' || $mime === 'image/webp') {
+            imagealphablending($dst, false);
+            imagesavealpha($dst, true);
+            $transparent = imagecolorallocatealpha($dst, 0, 0, 0, 127);
+            imagefilledrectangle($dst, 0, 0, $newW, $newH, $transparent);
+        }
+        imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $w, $h);
+        imagedestroy($src);
+        $src = $dst;
+    }
+
+    // Re-encode (strips EXIF, predictable size)
+    $saveOk = false;
+    switch ($mime) {
+        case 'image/jpeg': $saveOk = imagejpeg($src, $destFs, JPEG_QUALITY); break;
+        case 'image/png':  $saveOk = imagepng ($src, $destFs, 6);             break;
+        case 'image/webp': $saveOk = imagewebp($src, $destFs, JPEG_QUALITY);  break;
+        case 'image/gif':  $saveOk = imagegif ($src, $destFs);                break;
+    }
+    imagedestroy($src);
+
+    if (!$saveOk) {
+        return ['ok' => false, 'error' => 'Could not save the optimized image. Check folder permissions.'];
+    }
+    return ['ok' => true, 'web_path' => $destWeb, 'fs_path' => $destFs];
 };
 
 // --- Toggle a single branch's availability -------------------------------
@@ -245,6 +383,7 @@ if ($is_post && ($_POST['action'] ?? '') === 'set_global_maintenance') {
 }
 
 // --- Upload / replace a branch image -------------------------------------
+// --- Upload / replace a branch's PRIMARY (cover) image -------------------
 if ($is_post && ($_POST['action'] ?? '') === 'upload_branch_image') {
     $bid = (int)($_POST['branch_id'] ?? 0);
 
@@ -252,78 +391,54 @@ if ($is_post && ($_POST['action'] ?? '') === 'upload_branch_image') {
         $action_err = "Invalid branch.";
     } elseif (!isset($_FILES['branch_image']) || $_FILES['branch_image']['error'] === UPLOAD_ERR_NO_FILE) {
         $action_err = "Please choose an image file to upload.";
-    } elseif ($_FILES['branch_image']['error'] !== UPLOAD_ERR_OK) {
-        $action_err = "File upload failed (error code " . (int)$_FILES['branch_image']['error'] . ").";
     } else {
-        $file = $_FILES['branch_image'];
-        $allowed = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
-                    'png' => 'image/png',  'webp' => 'image/webp', 'gif' => 'image/gif'];
-        $maxBytes = 5 * 1024 * 1024; // 5 MB
-
-        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime  = finfo_file($finfo, $file['tmp_name']);
-        finfo_close($finfo);
-
-        if (!isset($allowed[$ext]) || !in_array($mime, $allowed, true)) {
-            $action_err = "Only JPG, PNG, WEBP and GIF images are allowed.";
-        } elseif ($file['size'] > $maxBytes) {
-            $action_err = "Image is too large (max 5 MB).";
+        // Confirm branch exists
+        $stmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
+        $stmt->execute([$bid]);
+        $bname = $stmt->fetchColumn();
+        if (!$bname) {
+            $action_err = "Branch not found.";
         } else {
-            // Confirm branch exists
-            $stmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
-            $stmt->execute([$bid]);
-            $bname = $stmt->fetchColumn();
-            if (!$bname) {
-                $action_err = "Branch not found.";
+            $result = $processBranchImage($_FILES['branch_image'], $bid);
+            if (!$result['ok']) {
+                $action_err = $result['error'];
             } else {
-                $newName = sprintf('branch-%d-%s.%s', $bid, bin2hex(random_bytes(6)), $ext);
-                $destFs  = $BRANCH_UPLOAD_DIR_FS . $newName;
-                $destWeb = $BRANCH_UPLOAD_DIR_WEB . $newName;
+                try {
+                    $pdo->beginTransaction();
 
-                if (!@move_uploaded_file($file['tmp_name'], $destFs)) {
-                    $action_err = "Could not save uploaded file. Check folder permissions on /assets/branches/.";
-                } else {
-                    try {
-                        $pdo->beginTransaction();
+                    // Find the current primary image so we can clean it up
+                    $cur = $pdo->prepare("
+                        SELECT image_id, image_path
+                        FROM   branch_images
+                        WHERE  branch_id = ? AND is_primary = 1
+                        LIMIT  1
+                    ");
+                    $cur->execute([$bid]);
+                    $existing = $cur->fetch(PDO::FETCH_ASSOC);
 
-                        // Find the current primary image so we can clean it up
-                        $cur = $pdo->prepare("
-                            SELECT image_id, image_path
-                            FROM   branch_images
-                            WHERE  branch_id = ? AND is_primary = 1
-                            LIMIT  1
-                        ");
-                        $cur->execute([$bid]);
-                        $existing = $cur->fetch(PDO::FETCH_ASSOC);
-
-                        if ($existing) {
-                            // Replace path on the existing primary row
-                            $pdo->prepare("
-                                UPDATE branch_images
-                                SET    image_path           = ?,
-                                       uploaded_at          = NOW(),
-                                       uploaded_by_admin_id = ?
-                                WHERE  image_id = ?
-                            ")->execute([$destWeb, $current_admin['admin_id'], $existing['image_id']]);
-                            // Remove the old physical file (only if it lived in our managed folder)
-                            $deleteBranchFile($existing['image_path']);
-                        } else {
-                            // Insert a new primary row
-                            $pdo->prepare("
-                                INSERT INTO branch_images
-                                    (branch_id, image_path, is_primary, uploaded_by_admin_id)
-                                VALUES (?, ?, 1, ?)
-                            ")->execute([$bid, $destWeb, $current_admin['admin_id']]);
-                        }
-
-                        $pdo->commit();
-                        $action_msg = "Image updated for <strong>" . htmlspecialchars($bname) . "</strong>.";
-                    } catch (Exception $e) {
-                        $pdo->rollBack();
-                        @unlink($destFs);
-                        $action_err = "Could not save image: " . htmlspecialchars($e->getMessage());
+                    if ($existing) {
+                        $pdo->prepare("
+                            UPDATE branch_images
+                            SET    image_path           = ?,
+                                   uploaded_at          = NOW(),
+                                   uploaded_by_admin_id = ?
+                            WHERE  image_id = ?
+                        ")->execute([$result['web_path'], $current_admin['admin_id'], $existing['image_id']]);
+                        $deleteBranchFile($existing['image_path']);
+                    } else {
+                        $pdo->prepare("
+                            INSERT INTO branch_images
+                                (branch_id, image_path, is_primary, sort_order, uploaded_by_admin_id)
+                            VALUES (?, ?, 1, 0, ?)
+                        ")->execute([$bid, $result['web_path'], $current_admin['admin_id']]);
                     }
+
+                    $pdo->commit();
+                    $action_msg = "Cover image updated for <strong>" . htmlspecialchars($bname) . "</strong>.";
+                } catch (Exception $e) {
+                    $pdo->rollBack();
+                    @unlink($result['fs_path']);
+                    $action_err = "Could not save image: " . htmlspecialchars($e->getMessage());
                 }
             }
         }
@@ -360,6 +475,175 @@ if ($is_post && ($_POST['action'] ?? '') === 'delete_branch_image') {
                 $action_msg = "Image removed for <strong>" . htmlspecialchars($bname)
                             . "</strong>. The default placeholder will be shown until a new one is uploaded.";
             }
+        }
+    }
+}
+
+// --- GALLERY: upload one or more gallery images (caps at MAX_GALLERY_IMAGES)
+if ($is_post && ($_POST['action'] ?? '') === 'upload_gallery_images') {
+    $bid = (int)($_POST['branch_id'] ?? 0);
+
+    if ($bid <= 0) {
+        $action_err = "Invalid branch.";
+    } else {
+        $stmt = $pdo->prepare("SELECT branch_name FROM branches WHERE branch_id = ?");
+        $stmt->execute([$bid]);
+        $bname = $stmt->fetchColumn();
+        if (!$bname) {
+            $action_err = "Branch not found.";
+        } else {
+            // Count current gallery images
+            $countStmt = $pdo->prepare("
+                SELECT COUNT(*) FROM branch_images
+                WHERE  branch_id = ? AND is_primary = 0
+            ");
+            $countStmt->execute([$bid]);
+            $current = (int)$countStmt->fetchColumn();
+            $remaining = MAX_GALLERY_IMAGES - $current;
+
+            if ($remaining <= 0) {
+                $action_err = "Gallery is full (max " . MAX_GALLERY_IMAGES
+                            . " images per branch). Delete or replace existing images first.";
+            } elseif (empty($_FILES['gallery_images']['name'][0])) {
+                $action_err = "Please choose at least one image to upload.";
+            } else {
+                $names = $_FILES['gallery_images']['name'];
+                $accepted = 0;
+                $skipped  = 0;
+                $errors   = [];
+
+                // Determine current max sort_order so new images append cleanly
+                $soStmt = $pdo->prepare("
+                    SELECT COALESCE(MAX(sort_order), -1) FROM branch_images
+                    WHERE  branch_id = ? AND is_primary = 0
+                ");
+                $soStmt->execute([$bid]);
+                $nextSort = (int)$soStmt->fetchColumn() + 1;
+
+                for ($i = 0, $n = count($names); $i < $n; $i++) {
+                    if ($accepted >= $remaining) {
+                        $skipped++;
+                        continue;
+                    }
+                    if (($_FILES['gallery_images']['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                        continue;
+                    }
+                    $oneFile = [
+                        'name'     => $_FILES['gallery_images']['name'][$i],
+                        'type'     => $_FILES['gallery_images']['type'][$i],
+                        'tmp_name' => $_FILES['gallery_images']['tmp_name'][$i],
+                        'error'    => $_FILES['gallery_images']['error'][$i],
+                        'size'     => $_FILES['gallery_images']['size'][$i],
+                    ];
+                    $r = $processBranchImage($oneFile, $bid);
+                    if (!$r['ok']) {
+                        $errors[] = htmlspecialchars($oneFile['name']) . ': ' . $r['error'];
+                        continue;
+                    }
+                    try {
+                        $pdo->prepare("
+                            INSERT INTO branch_images
+                                (branch_id, image_path, is_primary, sort_order, uploaded_by_admin_id)
+                            VALUES (?, ?, 0, ?, ?)
+                        ")->execute([$bid, $r['web_path'], $nextSort, $current_admin['admin_id']]);
+                        $nextSort++;
+                        $accepted++;
+                    } catch (Exception $e) {
+                        @unlink($r['fs_path']);
+                        $errors[] = htmlspecialchars($oneFile['name']) . ': database error';
+                    }
+                }
+
+                if ($accepted > 0) {
+                    $msg = "Added <strong>{$accepted}</strong> image"
+                         . ($accepted !== 1 ? 's' : '') . " to <strong>"
+                         . htmlspecialchars($bname) . "</strong>'s gallery.";
+                    if ($skipped > 0) {
+                        $msg .= " {$skipped} skipped — gallery limit of "
+                              . MAX_GALLERY_IMAGES . " reached.";
+                    }
+                    if (!empty($errors)) {
+                        $msg .= "<br>Issues: " . implode('; ', $errors);
+                    }
+                    $action_msg = $msg;
+                } else {
+                    $action_err = empty($errors)
+                        ? "No images were uploaded."
+                        : "Upload failed: " . implode('; ', $errors);
+                }
+            }
+        }
+    }
+}
+
+// --- GALLERY: replace a single gallery image by image_id ----------------
+if ($is_post && ($_POST['action'] ?? '') === 'replace_gallery_image') {
+    $imgId = (int)($_POST['image_id'] ?? 0);
+    $bid   = (int)($_POST['branch_id'] ?? 0);   // sanity-check ownership
+
+    if ($imgId <= 0 || $bid <= 0) {
+        $action_err = "Invalid request.";
+    } elseif (!isset($_FILES['gallery_image']) || $_FILES['gallery_image']['error'] === UPLOAD_ERR_NO_FILE) {
+        $action_err = "Please choose a replacement image.";
+    } else {
+        $verify = $pdo->prepare("
+            SELECT image_path FROM branch_images
+            WHERE  image_id   = ?
+              AND  branch_id  = ?
+              AND  is_primary = 0
+            LIMIT  1
+        ");
+        $verify->execute([$imgId, $bid]);
+        $existing = $verify->fetch(PDO::FETCH_ASSOC);
+        if (!$existing) {
+            $action_err = "That gallery image could not be found.";
+        } else {
+            $r = $processBranchImage($_FILES['gallery_image'], $bid);
+            if (!$r['ok']) {
+                $action_err = $r['error'];
+            } else {
+                try {
+                    $pdo->prepare("
+                        UPDATE branch_images
+                        SET    image_path           = ?,
+                               uploaded_at          = NOW(),
+                               uploaded_by_admin_id = ?
+                        WHERE  image_id = ?
+                    ")->execute([$r['web_path'], $current_admin['admin_id'], $imgId]);
+                    $deleteBranchFile($existing['image_path']);
+                    $action_msg = "Gallery image replaced.";
+                } catch (Exception $e) {
+                    @unlink($r['fs_path']);
+                    $action_err = "Could not replace gallery image: " . htmlspecialchars($e->getMessage());
+                }
+            }
+        }
+    }
+}
+
+// --- GALLERY: delete a single gallery image by image_id -----------------
+if ($is_post && ($_POST['action'] ?? '') === 'delete_gallery_image') {
+    $imgId = (int)($_POST['image_id'] ?? 0);
+    $bid   = (int)($_POST['branch_id'] ?? 0);
+
+    if ($imgId <= 0 || $bid <= 0) {
+        $action_err = "Invalid request.";
+    } else {
+        $verify = $pdo->prepare("
+            SELECT image_path FROM branch_images
+            WHERE  image_id   = ?
+              AND  branch_id  = ?
+              AND  is_primary = 0
+            LIMIT  1
+        ");
+        $verify->execute([$imgId, $bid]);
+        $existing = $verify->fetch(PDO::FETCH_ASSOC);
+        if (!$existing) {
+            $action_err = "That gallery image could not be found.";
+        } else {
+            $pdo->prepare("DELETE FROM branch_images WHERE image_id = ?")->execute([$imgId]);
+            $deleteBranchFile($existing['image_path']);
+            $action_msg = "Gallery image removed.";
         }
     }
 }
@@ -515,6 +799,19 @@ if ($view === 'customers') {
         WHERE  setting_key = 'all_branches_maintenance'
         LIMIT 1
     ")->fetchColumn();
+
+    // Gallery images grouped by branch_id (single query, then bucket)
+    $gallery_rows = $pdo->query("
+        SELECT image_id, branch_id, image_path, sort_order, uploaded_at
+        FROM   branch_images
+        WHERE  is_primary = 0
+        ORDER  BY branch_id, sort_order, image_id
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $gallery_by_branch = [];   // [branch_id => [ {image_id, image_path, ...}, ... ]]
+    foreach ($gallery_rows as $g) {
+        $gallery_by_branch[(int)$g['branch_id']][] = $g;
+    }
 
 } elseif ($view === 'admins') {
     $pageTitle = "Admin Management";
@@ -1259,6 +1556,127 @@ if ($view === 'customers') {
             display: block; word-break: break-all;
         }
 
+        /* ─────────────────────────────────────────────────────────────
+           GALLERY (admin-side branch gallery management)
+           ───────────────────────────────────────────────────────────── */
+        .btn-mini.btn-gallery {
+            background: rgba(118,75,162,0.12);
+            color: #5b3490;
+        }
+        .gallery-section {
+            border-top: 1px dashed #e3e8ee;
+            padding-top: 0.9rem;
+            margin-top: 4px;
+            display: none;             /* expanded by toggle */
+        }
+        .gallery-section.is-open { display: block; }
+        .gallery-section-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 0.6rem;
+        }
+        .gallery-section-header .label {
+            font-size: 0.75rem; font-weight: 700; color: #555;
+            text-transform: uppercase; letter-spacing: 0.05em;
+            margin: 0;
+        }
+        .gallery-section-header .count-pill {
+            font-size: 0.72rem; font-weight: 700;
+            padding: 3px 9px; border-radius: 50px;
+            background: rgba(0,119,182,0.1); color: var(--primary-dark);
+        }
+        .gallery-section-header .count-pill.is-full {
+            background: rgba(231,76,60,0.12); color: #b03a2e;
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        .gallery-thumb {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #eef3f8;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            transition: transform 0.18s, box-shadow 0.18s;
+        }
+        .gallery-thumb:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(0,119,182,0.18);
+        }
+        .gallery-thumb img {
+            width: 100%; height: 100%;
+            object-fit: cover; display: block;
+        }
+        .gallery-thumb .gt-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.55) 75%);
+            display: flex; align-items: flex-end; justify-content: center;
+            gap: 6px;
+            padding: 6px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .gallery-thumb:hover .gt-overlay { opacity: 1; }
+        .gallery-thumb .gt-btn {
+            background: white;
+            border: none;
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            font-size: 0.8rem;
+            color: var(--primary-dark);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+            transition: transform 0.15s, background 0.15s, color 0.15s;
+            font-family: inherit;
+        }
+        .gallery-thumb .gt-btn:hover { transform: scale(1.1); }
+        .gallery-thumb .gt-btn.gt-delete:hover { background: #e74c3c; color: white; }
+        .gallery-thumb .gt-btn.gt-replace:hover { background: var(--primary); color: white; }
+
+        .gallery-tile-add {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 6px;
+            border-radius: 10px;
+            border: 2px dashed rgba(0,119,182,0.4);
+            color: var(--primary-dark);
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+            background: rgba(0,119,182,0.04);
+            transition: background 0.2s, border-color 0.2s, transform 0.15s;
+            aspect-ratio: 1 / 1;
+        }
+        .gallery-tile-add:hover {
+            background: rgba(0,119,182,0.1);
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+        .gallery-tile-add i { font-size: 1.1rem; }
+        .gallery-tile-add.is-disabled {
+            opacity: 0.45; pointer-events: none;
+            border-style: solid; background: #f5f7fa;
+        }
+
+        .gallery-empty-hint {
+            padding: 14px 12px;
+            background: rgba(0,119,182,0.05);
+            border: 1px dashed rgba(0,119,182,0.25);
+            border-radius: 10px;
+            font-size: 0.82rem;
+            color: #555;
+            text-align: center;
+            margin-bottom: 0.6rem;
+        }
+
         @media (max-width: 600px) {
             .branch-admin-grid { grid-template-columns: 1fr; }
             .maint-toggle-card { flex-direction: column; align-items: flex-start; }
@@ -1874,7 +2292,7 @@ if ($view === 'customers') {
                                     <?php endif; ?>
                                 </form>
 
-                                <!-- Image upload / replace -->
+                                <!-- Image upload / replace + Gallery toggle -->
                                 <form method="POST" action="dashboard.php?view=branches" class="row"
                                       enctype="multipart/form-data"
                                       onsubmit="return confirmImageUpload(this);">
@@ -1893,21 +2311,121 @@ if ($view === 'customers') {
                                             id="bs_<?= $b['branch_id'] ?>" style="display:none;">
                                         <i class="fas fa-save"></i> Save
                                     </button>
+                                    <?php
+                                        $galleryItems = $gallery_by_branch[(int)$b['branch_id']] ?? [];
+                                        $galleryCount = count($galleryItems);
+                                    ?>
+                                    <button type="button"
+                                            class="btn-mini btn-gallery"
+                                            onclick="toggleGallery(<?= $b['branch_id'] ?>)"
+                                            title="Manage gallery images (max <?= MAX_GALLERY_IMAGES ?>)">
+                                        <i class="fas fa-images"></i>
+                                        Gallery (<span id="gc_<?= $b['branch_id'] ?>"><?= $galleryCount ?></span>/<?= MAX_GALLERY_IMAGES ?>)
+                                    </button>
                                     <span class="file-name-preview" id="bn_<?= $b['branch_id'] ?>"></span>
                                 </form>
 
-                                <!-- Delete image -->
+                                <!-- Delete cover image -->
                                 <form method="POST" action="dashboard.php?view=branches" class="row"
-                                      onsubmit="return confirm('Remove the uploaded image for <?= htmlspecialchars(addslashes($b['branch_name'])) ?>? The default placeholder will be shown instead.');">
+                                      onsubmit="return confirm('Remove the uploaded cover image for <?= htmlspecialchars(addslashes($b['branch_name'])) ?>? The default placeholder will be shown instead.');">
                                     <input type="hidden" name="action"    value="delete_branch_image">
                                     <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
                                     <p class="label">&nbsp;</p>
                                     <button type="submit" class="btn-mini btn-delete-img <?= $hasImage ? '' : 'disabled' ?>"
                                             <?= $hasImage ? '' : 'disabled' ?>
-                                            title="<?= $hasImage ? 'Delete uploaded image' : 'No uploaded image to delete' ?>">
+                                            title="<?= $hasImage ? 'Delete uploaded cover image' : 'No uploaded image to delete' ?>">
                                         <i class="fas fa-trash"></i> Delete Image
                                     </button>
                                 </form>
+                            </div>
+
+                            <!-- ─── Gallery section (per branch) ─────────────────── -->
+                            <?php
+                                $galleryFull   = $galleryCount >= MAX_GALLERY_IMAGES;
+                                $sectionOpenCls = ($galleryCount > 0) ? 'is-open' : '';
+                            ?>
+                            <div class="gallery-section <?= $sectionOpenCls ?>" id="gallery_<?= $b['branch_id'] ?>">
+                                <div class="gallery-section-header">
+                                    <p class="label"><i class="fas fa-images" style="color:#5b3490;margin-right:6px;"></i>Branch Gallery</p>
+                                    <span class="count-pill <?= $galleryFull ? 'is-full' : '' ?>"
+                                          id="gc2_<?= $b['branch_id'] ?>"><?= $galleryCount ?> / <?= MAX_GALLERY_IMAGES ?></span>
+                                </div>
+
+                                <?php if ($galleryCount === 0): ?>
+                                    <div class="gallery-empty-hint">
+                                        <i class="fas fa-info-circle" style="color:var(--primary);margin-right:5px;"></i>
+                                        No gallery images yet. Click the tile below to upload up to <?= MAX_GALLERY_IMAGES ?> photos.
+                                    </div>
+                                <?php endif; ?>
+
+                                <div class="gallery-grid">
+                                    <?php foreach ($galleryItems as $g): ?>
+                                        <div class="gallery-thumb">
+                                            <img src="../<?= htmlspecialchars($g['image_path']) ?>"
+                                                 alt="Gallery image"
+                                                 loading="lazy"
+                                                 onerror="this.src='../assets/default.jpg'">
+                                            <div class="gt-overlay">
+                                                <!-- Replace this gallery image -->
+                                                <form method="POST" action="dashboard.php?view=branches"
+                                                      enctype="multipart/form-data" style="margin:0;display:inline;">
+                                                    <input type="hidden" name="action"    value="replace_gallery_image">
+                                                    <input type="hidden" name="image_id"  value="<?= $g['image_id'] ?>">
+                                                    <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
+                                                    <input type="file" name="gallery_image"
+                                                           id="grp_<?= $g['image_id'] ?>"
+                                                           class="file-input-hidden"
+                                                           accept=".jpg,.jpeg,.png,.webp,.gif"
+                                                           onchange="this.form.submit()">
+                                                    <label for="grp_<?= $g['image_id'] ?>" class="gt-btn gt-replace"
+                                                           title="Replace this image" style="cursor:pointer;">
+                                                        <i class="fas fa-sync-alt"></i>
+                                                    </label>
+                                                </form>
+                                                <!-- Delete this gallery image -->
+                                                <form method="POST" action="dashboard.php?view=branches"
+                                                      onsubmit="return confirm('Delete this gallery image? This cannot be undone.');"
+                                                      style="margin:0;display:inline;">
+                                                    <input type="hidden" name="action"    value="delete_gallery_image">
+                                                    <input type="hidden" name="image_id"  value="<?= $g['image_id'] ?>">
+                                                    <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
+                                                    <button type="submit" class="gt-btn gt-delete" title="Delete this image">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+
+                                    <!-- Add tile (multi-upload) -->
+                                    <?php if (!$galleryFull): ?>
+                                        <form method="POST" action="dashboard.php?view=branches"
+                                              enctype="multipart/form-data" style="margin:0;">
+                                            <input type="hidden" name="action"    value="upload_gallery_images">
+                                            <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
+                                            <input type="file" name="gallery_images[]"
+                                                   id="gadd_<?= $b['branch_id'] ?>"
+                                                   class="file-input-hidden"
+                                                   accept=".jpg,.jpeg,.png,.webp,.gif"
+                                                   multiple
+                                                   onchange="this.form.submit()">
+                                            <label for="gadd_<?= $b['branch_id'] ?>" class="gallery-tile-add"
+                                                   title="Upload up to <?= (MAX_GALLERY_IMAGES - $galleryCount) ?> more image(s)">
+                                                <i class="fas fa-plus-circle"></i>
+                                                <span>Add Photos</span>
+                                                <small style="font-size:0.7rem;font-weight:500;opacity:0.75;">
+                                                    <?= MAX_GALLERY_IMAGES - $galleryCount ?> slot<?= (MAX_GALLERY_IMAGES - $galleryCount) === 1 ? '' : 's' ?> left
+                                                </small>
+                                            </label>
+                                        </form>
+                                    <?php else: ?>
+                                        <div class="gallery-tile-add is-disabled" title="Gallery is full — delete or replace existing images.">
+                                            <i class="fas fa-check-circle"></i>
+                                            <span>Full</span>
+                                            <small style="font-size:0.7rem;font-weight:500;opacity:0.75;">9 / 9</small>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2001,6 +2519,16 @@ if ($view === 'customers') {
                         alert("Please choose an image first."); return false;
                     }
                     return true;
+                }
+
+                /* ─── Gallery: toggle the per-branch panel open/closed ─── */
+                function toggleGallery(branchId) {
+                    const sec = document.getElementById('gallery_' + branchId);
+                    if (!sec) return;
+                    sec.classList.toggle('is-open');
+                    if (sec.classList.contains('is-open')) {
+                        sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+                    }
                 }
             </script>
 

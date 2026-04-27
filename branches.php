@@ -26,21 +26,21 @@ $globalMaintenance = (int)$pdo->query("
    ───────────────────────────────────────────────────────────────── */
 .branches-hero {
     text-align: center;
-    padding: 3rem 1rem 2rem;
-    margin-bottom: 1rem;
+    margin: 1.5rem auto 2rem;
+    padding: 0 1rem;
 }
 .branches-hero h1 {
+    display: inline-block;
+    padding: 0.9rem 2.5rem;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 100px;          /* full pill */
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
     font-size: 2.4rem;
     color: var(--primary-dark);
-    margin: 0 0 0.5rem;
+    margin: 0;
     font-weight: 700;
-    text-shadow: 0 2px 8px rgba(255,255,255,0.6);
-}
-.branches-hero p {
-    color: #555;
-    font-size: 1.05rem;
-    max-width: 640px;
-    margin: 0 auto;
 }
 
 /* Maintenance banner (when ALL branches are under maintenance) */
@@ -246,7 +246,6 @@ $globalMaintenance = (int)$pdo->query("
 
 <section class="branches-hero">
     <h1><i style="color:var(--secondary);margin-right:8px;"></i>Branches</h1>
-    <p>Pick the perfect Emiart escape. Each branch offers its own atmosphere &mdash; from family-friendly day trips to private overnight retreats.</p>
 </section>
 
 <?php if ($globalMaintenance === 1): ?>
