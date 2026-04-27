@@ -276,6 +276,31 @@ if (!isset($totalSpent))   $totalSpent   = 0;
     box-shadow: 0 4px 14px rgba(0,119,182,0.25);
 }
 .btn-book-now:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,119,182,0.35); }
+.btn-print-receipt {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #1a3a6e, #0077b6);
+    color: white;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 7px 16px;
+    border-radius: 50px;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: 0.25s;
+    box-shadow: 0 3px 10px rgba(0,119,182,0.22);
+    white-space: nowrap;
+}
+.btn-print-receipt:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0,119,182,0.35);
+    color: white;
+    text-decoration: none;
+}
+.btn-print-receipt i { font-size: 0.85rem; }
 @media (max-width: 640px) {
     .res-card { flex-direction: column; }
     .res-card-img { width: 100%; height: 180px; }
@@ -370,7 +395,14 @@ if (!isset($totalSpent))   $totalSpent   = 0;
                         <?php endif; ?>
                         <div class="res-footer">
                             <div class="res-total">&#8369;<?= number_format($res['total_amount'], 2) ?><span>Total Amount</span></div>
-                            <div class="res-id">Reservation #RES-<?= (int)$res['reservation_id'] ?></div>
+                            <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                                <div class="res-id">Reservation #RES-<?= (int)$res['reservation_id'] ?></div>
+                                <?php if (strtolower($res['status']) === 'confirmed'): ?>
+                                <a href="print_receipt.php?id=<?= (int)$res['reservation_id'] ?>" target="_blank" class="btn-print-receipt">
+                                    <i class="fas fa-print"></i> Print Receipt
+                                </a>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -417,7 +449,14 @@ if (!isset($totalSpent))   $totalSpent   = 0;
                         <?php endif; ?>
                         <div class="res-footer">
                             <div class="res-total">&#8369;<?= number_format($res['total_amount'], 2) ?><span>Total Amount</span></div>
-                            <div class="res-id">Reservation #RES-<?= (int)$res['reservation_id'] ?></div>
+                            <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                                <div class="res-id">Reservation #RES-<?= (int)$res['reservation_id'] ?></div>
+                                <?php if (strtolower($res['status']) === 'confirmed'): ?>
+                                <a href="print_receipt.php?id=<?= (int)$res['reservation_id'] ?>" target="_blank" class="btn-print-receipt">
+                                    <i class="fas fa-print"></i> Print Receipt
+                                </a>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -466,7 +505,14 @@ if (!isset($totalSpent))   $totalSpent   = 0;
                         <?php endif; ?>
                         <div class="res-footer">
                             <div class="res-total">&#8369;<?= number_format($res['total_amount'], 2) ?><span>Total Amount</span></div>
-                            <div class="res-id">Reservation #RES-<?= (int)$res['reservation_id'] ?></div>
+                            <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                                <div class="res-id">Reservation #RES-<?= (int)$res['reservation_id'] ?></div>
+                                <?php if (strtolower($res['status']) === 'confirmed'): ?>
+                                <a href="print_receipt.php?id=<?= (int)$res['reservation_id'] ?>" target="_blank" class="btn-print-receipt">
+                                    <i class="fas fa-print"></i> Print Receipt
+                                </a>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>

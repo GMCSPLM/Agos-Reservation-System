@@ -9,46 +9,106 @@ if (isset($_GET['cancelled'])) {
     $bookingError = "Your payment was cancelled. The slot is still available — feel free to try again.";
 }
 
+/* ───── Load branches w/ status + global maintenance flag ─────────────────
+ * Source of truth for both the form and the POST guard. We intentionally
+ * load these BEFORE the POST handler so the handler can enforce them.
+ * --------------------------------------------------------------------- */
+$branches = $pdo->query("SELECT * FROM v_branches_full ORDER BY branch_name")->fetchAll();
+
+$globalMaintenance = (int)$pdo->query("
+    SELECT setting_value FROM system_settings
+    WHERE  setting_key = 'all_branches_maintenance' LIMIT 1
+")->fetchColumn();
+
+/* Bookable subset — used by the resort dropdown so customers cannot
+ * pick an unavailable branch in the first place.                        */
+$bookableBranches = array_values(array_filter($branches, function ($b) use ($globalMaintenance) {
+    return $globalMaintenance !== 1 && (int)$b['is_available'] === 1;
+}));
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postBranchId = isset($_POST['branch_id']) && is_numeric($_POST['branch_id'])
         ? intval($_POST['branch_id']) : null;
     $postDate     = $_POST['check_in'] ?? null;
     $postType     = $_POST['type']     ?? null;
 
-    if ($postBranchId && $postDate && $postType) {
-        $guardStmt = $pdo->prepare("
-            SELECT COUNT(*) FROM reservations
-            WHERE  branch_id        = ?
-              AND  reservation_date = ?
-              AND  reservation_type = ?
-              AND  status IN ('Confirmed', 'Pending')
-        ");
-        $guardStmt->execute([$postBranchId, $postDate, $postType]);
-        $slotTaken = (int) $guardStmt->fetchColumn() > 0;
-
-        if ($slotTaken) {
-            $typeLabel    = ($postType === 'Day') ? 'Day Tour' : 'Overnight';
-            $bookingError = "Sorry, the <strong>{$typeLabel}</strong> slot on "
-                          . htmlspecialchars(date('F j, Y', strtotime($postDate)))
-                          . " is no longer available. Please choose a different date or tour type.";
-        } else {
-            echo '<form id="fwd" action="paymongo_api.php" method="POST" style="display:none">';
-            foreach ($_POST as $k => $v) {
-                echo '<input type="hidden" name="' . htmlspecialchars($k) . '" value="' . htmlspecialchars($v) . '">';
-            }
-            echo '</form>';
-            echo '<script>document.getElementById("fwd").submit();</script>';
-            exit;
-        }
-    } else {
+    if (!$postBranchId || !$postDate || !$postType) {
         $bookingError = "Invalid booking data. Please fill in all fields and try again.";
+    } else {
+        /* ── Branch-availability guard ──────────────────────────────────────
+         * Defense-in-depth. Stops:
+         *   • Direct POSTs to book.php that bypass the dropdown
+         *   • Stale forms left open while the admin disables the branch
+         *   • Pages cached before maintenance was switched on
+         * ----------------------------------------------------------------- */
+        $availStmt = $pdo->prepare("
+            SELECT branch_name, is_available
+            FROM   v_branches_full
+            WHERE  branch_id = ?
+        ");
+        $availStmt->execute([$postBranchId]);
+        $availRow = $availStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($globalMaintenance === 1) {
+            $bookingError = "Online bookings are currently paused — all branches are under maintenance. "
+                          . "Please try again later.";
+        } elseif (!$availRow) {
+            $bookingError = "That branch could not be found.";
+        } elseif ((int)$availRow['is_available'] !== 1) {
+            $bookingError = "Sorry, <strong>" . htmlspecialchars($availRow['branch_name'])
+                          . "</strong> is currently unavailable for booking. "
+                          . "Please choose a different branch.";
+        } else {
+            /* ── Slot-availability guard (existing) ──────────────────────── */
+            $guardStmt = $pdo->prepare("
+                SELECT COUNT(*) FROM reservations
+                WHERE  branch_id        = ?
+                  AND  reservation_date = ?
+                  AND  reservation_type = ?
+                  AND  status IN ('Confirmed', 'Pending')
+            ");
+            $guardStmt->execute([$postBranchId, $postDate, $postType]);
+            $slotTaken = (int) $guardStmt->fetchColumn() > 0;
+
+            if ($slotTaken) {
+                $typeLabel    = ($postType === 'Day') ? 'Day Tour' : 'Overnight';
+                $bookingError = "Sorry, the <strong>{$typeLabel}</strong> slot on "
+                              . htmlspecialchars(date('F j, Y', strtotime($postDate)))
+                              . " is no longer available. Please choose a different date or tour type.";
+            } else {
+                echo '<form id="fwd" action="paymongo_api.php" method="POST" style="display:none">';
+                foreach ($_POST as $k => $v) {
+                    echo '<input type="hidden" name="' . htmlspecialchars($k) . '" value="' . htmlspecialchars($v) . '">';
+                }
+                echo '</form>';
+                echo '<script>document.getElementById("fwd").submit();</script>';
+                exit;
+            }
+        }
     }
 }
 
-$branches          = $pdo->query("SELECT * FROM branches")->fetchAll();
 $preselectedBranch = $_GET['branch'] ?? null;
 $preselectedDate   = $_GET['date']   ?? null;
 $preselectedBranch = (is_numeric($preselectedBranch)) ? intval($preselectedBranch) : null;
+
+/* If the customer arrived via a link to an unavailable branch (e.g. a stale
+ * bookmark, or an admin disabled it after the link was shared), keep them
+ * on the page but flag the situation so the form shows a clear notice. */
+$preselectedUnavailable      = false;
+$preselectedBranchNameForMsg = '';
+if ($preselectedBranch !== null) {
+    foreach ($branches as $b) {
+        if ((int)$b['branch_id'] === $preselectedBranch) {
+            $preselectedBranchNameForMsg = $b['branch_name'];
+            if ((int)$b['is_available'] !== 1 || $globalMaintenance === 1) {
+                $preselectedUnavailable = true;
+                $preselectedBranch      = null; // let the dropdown fall back to first bookable
+            }
+            break;
+        }
+    }
+}
 
 $bookedSlots = [];
 if ($preselectedBranch && $preselectedDate) {
@@ -67,6 +127,10 @@ if ($preselectedBranch && $preselectedDate) {
 }
 
 $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
+
+/* Master flag — the form is only rendered when at least one branch is
+ * currently bookable AND we're not under global maintenance. */
+$canBook = ($globalMaintenance !== 1) && !empty($bookableBranches);
 ?>
 
 <style>
@@ -507,6 +571,58 @@ $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
     line-height: 1.5;
 }
 
+/* ── Booking-blocked card (maintenance / no bookable branches) ──────────── */
+.booking-blocked-card {
+    text-align: center;
+    padding: 36px 28px;
+    background: linear-gradient(135deg, #fff8e6 0%, #fff3cd 100%);
+    border: 1.5px solid rgba(243,156,18,0.35);
+    border-radius: 16px;
+    box-shadow: 0 6px 22px rgba(243,156,18,0.12);
+    margin: 8px 0;
+}
+.booking-blocked-icon {
+    width: 64px; height: 64px;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    background: rgba(243,156,18,0.18);
+    color: #b06d00;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem;
+}
+.booking-blocked-title {
+    color: #6b3e00;
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin: 0 0 8px;
+}
+.booking-blocked-text {
+    color: #7a4d00;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin: 0 auto 22px;
+    max-width: 420px;
+}
+.booking-blocked-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 26px;
+    background: var(--primary, #0077b6);
+    color: white;
+    border-radius: 50px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.92rem;
+    box-shadow: 0 4px 14px rgba(0,119,182,0.28);
+    transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.booking-blocked-btn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(0,119,182,0.38);
+}
+
 /* ── Price Summary Box ────────────────────────────────────────────────────── */
 .book-price-summary {
     display: flex;
@@ -740,39 +856,77 @@ $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
             </div>
             <?php endif; ?>
 
-            <form action="book.php" method="POST" id="bookingForm">
-
-                <!-- ── 1. Resort ── -->
-                <div class="bk-field-group">
-                    <label class="bk-field-label">
-                        <i class="fas fa-map-marker-alt"></i> Select Resort
-                    </label>
-                    <div class="bk-select-wrap">
-                        <select name="branch_id" id="fieldBranch" class="bk-input" required>
-                            <?php foreach ($branches as $b): ?>
-                                <option value="<?= $b['branch_id'] ?>"
-                                    <?= ($preselectedBranch === intval($b['branch_id'])) ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($b['branch_name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+            <?php if (!$canBook): ?>
+                <!-- ── No bookings can be accepted right now ────────────────── -->
+                <div class="booking-blocked-card">
+                    <div class="booking-blocked-icon">
+                        <i class="fas <?= $globalMaintenance === 1 ? 'fa-tools' : 'fa-info-circle' ?>"></i>
                     </div>
+                    <h3 class="booking-blocked-title">
+                        <?= $globalMaintenance === 1
+                            ? 'All Branches Under Maintenance'
+                            : 'No Branches Available For Booking' ?>
+                    </h3>
+                    <p class="booking-blocked-text">
+                        <?php if ($globalMaintenance === 1): ?>
+                            Online bookings are temporarily paused while we make improvements to all of our resorts.
+                            Please check back soon — we appreciate your patience.
+                        <?php else: ?>
+                            None of our branches are currently accepting bookings. Please check back later
+                            or contact us for assistance.
+                        <?php endif; ?>
+                    </p>
+                    <a href="branches.php" class="booking-blocked-btn">
+                        <i class="fas fa-arrow-left"></i> Back to Resorts
+                    </a>
                 </div>
 
-                <!-- ── 2. Date ── -->
-                <div class="bk-field-group">
-                    <label class="bk-field-label">
-                        <i class="far fa-calendar-alt"></i> Check-in Date
-                    </label>
-                    <input
-                        type="date"
-                        name="check_in"
-                        id="fieldDate"
-                        class="bk-input"
-                        required
-                        min="<?= date('Y-m-d') ?>"
-                        value="<?= htmlspecialchars($preselectedDate ?? '') ?>"
-                    >
+            <?php else: ?>
+                <?php if ($preselectedUnavailable): ?>
+                <!-- The link the customer used points at an unavailable branch — keep
+                     them on the page, but tell them clearly so they pick another. -->
+                <div class="booking-error-banner" style="background:rgba(243,156,18,0.1);border-left-color:#f39c12;color:#7a4d00;">
+                    <i class="fas fa-info-circle" style="color:#b06d00;"></i>
+                    <span>
+                        <strong><?= htmlspecialchars($preselectedBranchNameForMsg) ?></strong>
+                        is currently unavailable for booking. Please choose a different branch from the list below.
+                    </span>
+                </div>
+                <?php endif; ?>
+
+                <form action="book.php" method="POST" id="bookingForm">
+
+                    <!-- ── 1. Resort ── -->
+                    <div class="bk-field-group">
+                        <label class="bk-field-label">
+                            <i class="fas fa-map-marker-alt"></i> Select Resort
+                        </label>
+                        <div class="bk-select-wrap">
+                            <select name="branch_id" id="fieldBranch" class="bk-input" required>
+                                <?php foreach ($bookableBranches as $b): ?>
+                                    <option value="<?= $b['branch_id'] ?>"
+                                        <?= ($preselectedBranch === intval($b['branch_id'])) ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($b['branch_name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- ── 2. Date ── -->
+                    <div class="bk-field-group">
+                        <label class="bk-field-label">
+                            <i class="far fa-calendar-alt"></i> Check-in Date
+                        </label>
+                        <input
+                            type="date"
+                            name="check_in"
+                            id="fieldDate"
+                            class="bk-input"
+                            required
+                            min="<?= date('Y-m-d') ?>"
+                            value="<?= htmlspecialchars($preselectedDate ?? '') ?>"
+                        >
                 </div>
 
                 <!-- ── 3. Tour Type ── -->
@@ -860,6 +1014,7 @@ $allSlotsTaken = isset($bookedSlots['Day']) && isset($bookedSlots['Overnight']);
                 </button>
 
             </form>
+            <?php endif; /* end if ($canBook) */ ?>
 
         </div>
     </div>
