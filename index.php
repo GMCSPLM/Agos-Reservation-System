@@ -70,42 +70,18 @@ setTimeout(() => {
     }
 }
 
-// Pull every branch with its current status & primary image (single query
-// via the v_branches_full view added by the Branches Management migration).
-$branches = $pdo->query("SELECT * FROM v_branches_full ORDER BY branch_name")->fetchAll();
+$branches = $pdo->query("SELECT * FROM branches")->fetchAll();
 $amenities = $pdo->query("SELECT a.*, b.branch_name FROM amenities a JOIN branches b ON a.branch_id = b.branch_id")->fetchAll();
 $feedbacks = $pdo->query("SELECT f.*, c.full_name, b.branch_name FROM feedback f JOIN customers c ON f.customer_id = c.customer_id LEFT JOIN branches b ON f.branch_id = b.branch_id ORDER BY feedback_date DESC LIMIT 9")->fetchAll();
-
-// Global maintenance flag (1 = ALL branches under maintenance, no bookings allowed)
-$globalMaintenance = (int)$pdo->query("
-    SELECT setting_value FROM system_settings
-    WHERE  setting_key = 'all_branches_maintenance'
-    LIMIT 1
-")->fetchColumn();
-
-// Branches that can actually accept bookings RIGHT NOW (used by the calendar
-// branch picker so customers can never select an unbookable branch).
-$bookableBranches = array_values(array_filter($branches, function($b) use ($globalMaintenance) {
-    return $globalMaintenance !== 1 && (int)$b['is_available'] === 1;
-}));
 
 // Calendar Variables
 $selectedMonth = $_GET['month'] ?? date('m');
 $selectedYear = $_GET['year'] ?? date('Y');
-// Default to the first BOOKABLE branch instead of 'all' — the "All Branches" option has been removed
-$firstBranch    = $bookableBranches[0]['branch_id'] ?? ($branches[0]['branch_id'] ?? null);
+// Default to the first branch instead of 'all' — the "All Branches" option has been removed
+$firstBranch    = $branches[0]['branch_id'] ?? null;
 $selectedBranch = $_GET['branch'] ?? $firstBranch;
 // Reject 'all' in case it arrives via a stale URL
 if ($selectedBranch === 'all') $selectedBranch = $firstBranch;
-
-// If the requested branch is not bookable, fall back to the first bookable one
-$selectedIsBookable = false;
-foreach ($bookableBranches as $bb) {
-    if ((int)$bb['branch_id'] === (int)$selectedBranch) { $selectedIsBookable = true; break; }
-}
-if (!$selectedIsBookable && !empty($bookableBranches)) {
-    $selectedBranch = $bookableBranches[0]['branch_id'];
-}
 
 // Validate inputs
 $selectedMonth = max(1, min(12, intval($selectedMonth)));
@@ -122,25 +98,22 @@ $firstDayOfWeek = date('N', strtotime("$selectedYear-$selectedMonth-01"));
 
 // For the selected branch: fetch which reservation_type slots are taken on each date.
 // GROUP BY (date, reservation_type) so one record = one booked slot, not one record per guest.
-// Skip the lookup entirely when no branch is selectable (avoids a query with branch_id = NULL).
-$slotsByDate = [];
-if (!empty($selectedBranch)) {
-    $stmt = $pdo->prepare("
-        SELECT reservation_date, reservation_type
-        FROM   reservations
-        WHERE  branch_id = ?
-          AND  MONTH(reservation_date) = ?
-          AND  YEAR(reservation_date)  = ?
-          AND  status IN ('Confirmed', 'Pending')
-        GROUP BY reservation_date, reservation_type
-    ");
-    $stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
+$stmt = $pdo->prepare("
+    SELECT reservation_date, reservation_type
+    FROM   reservations
+    WHERE  branch_id = ?
+      AND  MONTH(reservation_date) = ?
+      AND  YEAR(reservation_date)  = ?
+      AND  status IN ('Confirmed', 'Pending')
+    GROUP BY reservation_date, reservation_type
+");
+$stmt->execute([$selectedBranch, $selectedMonth, $selectedYear]);
 
-    // $slotsByDate['2025-06-15']['Day']       = true  → Day slot is taken
-    // $slotsByDate['2025-06-15']['Overnight'] = true  → Overnight slot is taken
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $slotsByDate[$row['reservation_date']][$row['reservation_type']] = true;
-    }
+// $slotsByDate['2025-06-15']['Day']       = true  → Day slot is taken
+// $slotsByDate['2025-06-15']['Overnight'] = true  → Overnight slot is taken
+$slotsByDate = [];
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $slotsByDate[$row['reservation_date']][$row['reservation_type']] = true;
 }
 
 // Calculate previous and next month
@@ -772,82 +745,37 @@ if ($nextMonth > 12) {
     }
 }
 
-/* ── ADDED: Feedback form responsive ── */
-@media (max-width: 768px) {
-    .feedback-section-wrapper {
-        padding: 40px 0;
-        background-attachment: scroll;
-    }
-    .feedback-header {
-        flex-direction: column;
-        gap: 10px;
-        margin-bottom: 20px;
-    }
-    .header-split {
-        width: 100%;
-    }
-    .header-split h3 {
-        font-size: 1.3rem;
-        white-space: normal;
-    }
-    .custom-form-grid {
-        grid-template-columns: 1fr;
-        gap: 20px;
-    }
-    .star-rating label { font-size: 2.2rem; }
-}
-
-/* ── ADDED: Calendar responsive for 320px–480px ── */
+/* ── ADDED: Calendar fix for small screens ── */
 @media (max-width: 480px) {
-    .calendar-container    { padding: 1rem 0.75rem; }
-    .calendar-grid         { gap: 3px; }
-    .calendar-day          { min-height: 62px; padding: 6px 3px; }
-    .calendar-day-header   { font-size: 0.62rem; padding: 8px 2px; }
-    .day-number            { font-size: 0.9rem; margin-bottom: 3px; }
-    .day-status            { font-size: 0.52rem; padding: 2px 3px; }
-    .slot-pills            { gap: 2px; margin-top: 2px; }
-    .slot-pill             { font-size: 0.48rem; padding: 1px 3px; }
-    .current-month         { font-size: 1rem; min-width: auto; }
-    .nav-btn               { padding: 8px 12px; font-size: 0.82rem; gap: 5px; }
-    .calendar-controls     { padding: 16px; }
-    .calendar-legend       { gap: 14px; padding: 14px; }
-    .legend-item           { font-size: 0.78rem; }
-    .legend-box            { width: 15px; height: 15px; }
-}
+    /* Fix calendar controls overflow */
+    .calendar-controls  { padding: 16px 12px; gap: 12px; }
+    .current-month      { font-size: 1rem; min-width: unset; }
+    .nav-btn            { padding: 8px 12px; font-size: 0.8rem; gap: 4px; }
+    .branch-select      { min-width: unset; width: 100%; }
 
-/* ── ADDED: 320px–375px screens (ultra-small) ── */
-@media (max-width: 375px) {
-    /* Feedback form header */
-    .feedback-section-wrapper  { padding: 28px 0; background-attachment: scroll; }
-    .header-split h3           { font-size: 1rem; margin: 0 8px; }
+    /* Fix calendar grid cells */
+    .calendar-container { padding: 1rem 0.6rem; }
+    .calendar-grid      { gap: 3px; margin-top: 10px; }
+    .calendar-day-header{ padding: 8px 2px; font-size: 0.55rem; border-radius: 4px; }
+    .calendar-day       { min-height: 58px; padding: 5px 3px; border-radius: 6px; border-width: 1px; }
+    .day-number         { font-size: 0.85rem; margin-bottom: 3px; font-weight: 700; }
+    .day-status         { font-size: 0.45rem; padding: 2px 3px; border-radius: 3px; }
+    .slot-pills         { gap: 2px; margin-top: 2px; }
+    .slot-pill          { font-size: 0.42rem; padding: 1px 3px; border-radius: 6px; }
 
-    /* Stars + submit */
-    .star-rating               { gap: 4px; margin-bottom: 14px; }
-    .star-rating label         { font-size: 1.65rem; }
-    .btn-submit-custom         { font-size: 0.95rem; padding: 9px 16px; }
+    /* Fix calendar legend */
+    .calendar-legend    { gap: 12px; padding: 12px; }
+    .legend-item        { font-size: 0.72rem; gap: 5px; }
+    .legend-box         { width: 14px; height: 14px; }
 
-    /* Textarea */
-    .custom-textarea           { min-height: 100px; font-size: 0.88rem; }
-    .custom-input              { padding: 11px; font-size: 0.88rem; }
-
-    /* Calendar */
-    .calendar-controls         { padding: 12px; gap: 14px; }
-    .calendar-nav              { gap: 8px; }
-    .nav-btn                   { padding: 6px 8px; font-size: 0.7rem; gap: 4px; }
-    .current-month             { font-size: 0.85rem; min-width: auto; }
-    .branch-selector label     { font-size: 0.82rem; }
-    .branch-select             { font-size: 0.82rem; padding: 8px 10px; min-width: unset; }
-    .calendar-container        { padding: 0.6rem 0.4rem; border-radius: 14px; }
-    .calendar-grid             { gap: 2px; }
-    .calendar-day              { min-height: 52px; padding: 4px 1px; border-radius: 6px; }
-    .calendar-day-header       { font-size: 0.54rem; padding: 5px 1px; border-radius: 5px; }
-    .day-number                { font-size: 0.75rem; margin-bottom: 2px; }
-    .day-status                { font-size: 0.42rem; padding: 1px 2px; border-radius: 3px; }
-    .slot-pills                { display: none; }   /* too small to render usefully */
-    .calendar-legend           { gap: 10px; padding: 10px; }
-    .legend-item               { font-size: 0.7rem; gap: 5px; }
-    .legend-box                { width: 13px; height: 13px; }
-    .calendar-day.clickable::after { display: none; } /* tooltip doesn't fit */
+    /* Fix feedback form */
+    .feedback-section-wrapper { padding: 40px 0; background-attachment: scroll; }
+    .feedback-header    { flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    .header-split       { width: 100%; }
+    .header-split h3    { font-size: 1.2rem; white-space: normal; }
+    .custom-form-grid   { grid-template-columns: 1fr; gap: 16px; }
+    .star-rating label  { font-size: 2rem; }
+    .custom-textarea    { min-height: 120px; }
 }
 </style>
 
@@ -860,53 +788,18 @@ if ($nextMonth > 12) {
 </header>
 
 <section class="container" style="padding-top: 4rem;">
-    <h2 class="section-title">Branches</h2>
-
-    <?php if ($globalMaintenance === 1): ?>
-        <div style="max-width:1100px;margin:0 auto 1.5rem;background:linear-gradient(135deg,#fff3cd 0%,#ffe8a3 100%);border-left:5px solid #f39c12;padding:14px 22px;border-radius:12px;box-shadow:0 4px 16px rgba(243,156,18,0.15);display:flex;align-items:center;gap:14px;">
-            <i class="fas fa-tools" style="font-size:1.5rem;color:#b06d00;flex-shrink:0;"></i>
-            <div>
-                <strong style="display:block;color:#6b3e00;">All branches are temporarily under maintenance.</strong>
-                <span style="color:#8a5a00;font-size:0.9rem;">Online bookings are paused. Please check back soon.</span>
-            </div>
-        </div>
-    <?php endif; ?>
-
+    <h2 class="section-title">Our Resorts</h2>
     <div class="grid">
-        <?php foreach($branches as $b):
-            $bAvail    = (int)$b['is_available'] === 1;
-            $bBookable = $bAvail && $globalMaintenance !== 1;
-
-            if ($globalMaintenance === 1) {
-                $statusBg='#f39c12'; $statusTxt='Under Maintenance';
-            } elseif ($bAvail) {
-                $statusBg='#28a745'; $statusTxt='Available';
-            } else {
-                $statusBg='#e74c3c'; $statusTxt='Unavailable';
-            }
-        ?>
-            <div class="card" style="position:relative;<?= $bBookable ? '' : 'opacity:0.92;' ?>">
-                <div style="position:relative;">
-                    <img src="<?= htmlspecialchars($b['image_url']) ?>" alt="Resort Image"
-                         onerror="this.src='assets/default.jpg'"
-                         style="<?= $bBookable ? '' : 'filter:grayscale(55%) brightness(0.9);' ?>">
-                    <span style="position:absolute;top:10px;right:10px;background:<?= $statusBg ?>;color:#fff;padding:5px 12px;border-radius:50px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;box-shadow:0 3px 10px rgba(0,0,0,0.15);">
-                        <?= $statusTxt ?>
-                    </span>
-                </div>
+        <?php foreach($branches as $b): ?>
+            <div class="card">
+                <img src="<?= htmlspecialchars($b['image_url']) ?>" alt="Resort Image">
                 <div class="card-content">
                     <h3><?= htmlspecialchars($b['branch_name']) ?></h3>
                     <p style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
                         <i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($b['location']) ?>
                     </p>
                     <p><?= htmlspecialchars($b['opening_hours'] ?? 'Always Open') ?></p>
-                    <?php if ($bBookable): ?>
-                        <a href="book.php?branch=<?= $b['branch_id'] ?>" style="display:block; text-align:center; margin-top:15px; color:var(--primary); font-weight:bold;">Book Here &rarr;</a>
-                    <?php else: ?>
-                        <span style="display:block;text-align:center;margin-top:15px;color:#999;font-weight:bold;cursor:not-allowed;">
-                            <i class="fas fa-lock"></i> Booking Unavailable
-                        </span>
-                    <?php endif; ?>
+                    <a href="book.php?branch=<?= $b['branch_id'] ?>" style="display:block; text-align:center; margin-top:15px; color:var(--primary); font-weight:bold;">Book Here &rarr;</a>
                 </div>
             </div>
         <?php endforeach; ?>
@@ -1034,23 +927,7 @@ if ($nextMonth > 12) {
 <!-- NEW IMPROVED CALENDAR -->
 <section class="container" style="padding-top: 4rem; padding-bottom: 4rem;">
     <h2 class="section-title">Availability Calendar</h2>
-
-    <?php if ($globalMaintenance === 1 || empty($bookableBranches)): ?>
-        <div style="max-width:1100px;margin:0 auto 1.5rem;background:linear-gradient(135deg,#fff3cd 0%,#ffe8a3 100%);border-left:5px solid #f39c12;padding:14px 22px;border-radius:12px;box-shadow:0 4px 16px rgba(243,156,18,0.15);display:flex;align-items:center;gap:14px;">
-            <i class="fas <?= $globalMaintenance === 1 ? 'fa-tools' : 'fa-info-circle' ?>" style="font-size:1.5rem;color:#b06d00;flex-shrink:0;"></i>
-            <div>
-                <strong style="display:block;color:#6b3e00;">
-                    <?= $globalMaintenance === 1
-                        ? 'All branches are temporarily under maintenance.'
-                        : 'No branches are currently accepting bookings.' ?>
-                </strong>
-                <span style="color:#8a5a00;font-size:0.9rem;">
-                    The calendar is shown for reference only &mdash; new bookings are paused.
-                </span>
-            </div>
-        </div>
-    <?php endif; ?>
-
+    
 <!-- Calendar Controls -->
 <div class="calendar-controls">
     <div class="calendar-nav">
@@ -1079,19 +956,13 @@ if ($nextMonth > 12) {
             <label for="branchSelect">
                 <i class="fas fa-building"></i> Select Branch:
             </label>
-            <?php if (!empty($bookableBranches)): ?>
             <select id="branchSelect" class="branch-select" onchange="changeBranch(this.value)">
-                <?php foreach($bookableBranches as $b): ?>
+                <?php foreach($branches as $b): ?>
                     <option value="<?= $b['branch_id'] ?>" <?= $selectedBranch == $b['branch_id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($b['branch_name']) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
-            <?php else: ?>
-            <span style="color:#888;font-style:italic;">
-                <i class="fas fa-info-circle"></i> No branches available for booking right now
-            </span>
-            <?php endif; ?>
         </div>
     </div>
     
@@ -1114,7 +985,6 @@ if ($nextMonth > 12) {
             }
 
             // Days of the month
-            $bookingsBlocked = ($globalMaintenance === 1 || empty($bookableBranches) || empty($selectedBranch));
             for ($day = 1; $day <= $daysInMonth; $day++) {
                 $dateStr     = sprintf("%s-%02d-%02d", $selectedYear, $selectedMonth, $day);
                 $isPast      = strtotime($dateStr) < strtotime(date('Y-m-d'));
@@ -1144,12 +1014,6 @@ if ($nextMonth > 12) {
                             $class      = "day-available";
                             $statusText = "Available";
                             $isClickable = true;
-                        }
-
-                        // If bookings are globally blocked (maintenance / no bookable branch),
-                        // make every future day non-clickable.
-                        if ($bookingsBlocked) {
-                            $isClickable = false;
                         }
 
                         // Slot pills: show Day and Overnight status as mini-badges
@@ -1194,23 +1058,16 @@ if ($nextMonth > 12) {
         
         <?php
             $branchName = '';
-            if (!empty($selectedBranch)) {
-                foreach($branches as $b) {
-                    if ($b['branch_id'] == $selectedBranch) {
-                        $branchName = $b['branch_name'];
-                        break;
-                    }
+            foreach($branches as $b) {
+                if ($b['branch_id'] == $selectedBranch) {
+                    $branchName = $b['branch_name'];
+                    break;
                 }
             }
         ?>
         <p style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
-            <i class="fas fa-info-circle"></i>
-            <?php if ($branchName !== ''): ?>
-                Showing slot availability for <strong><?= htmlspecialchars($branchName) ?></strong>.
-                Each date has a <strong>Day Tour</strong> and an <strong>Overnight</strong> slot &mdash; booking one leaves the other open.
-            <?php else: ?>
-                There are no branches available for booking right now.
-            <?php endif; ?>
+            <i class="fas fa-info-circle"></i> Showing slot availability for <strong><?= htmlspecialchars($branchName) ?></strong>.
+            Each date has a <strong>Day Tour</strong> and an <strong>Overnight</strong> slot — booking one leaves the other open.
         </p>
     </div>
 </section>
