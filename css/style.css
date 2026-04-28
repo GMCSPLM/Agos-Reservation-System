@@ -215,7 +215,7 @@ table {
 
 .pw-wrapper input {
     width: 100%;
-    padding-right: 44px !important; /* Prevents text from typing underneath the icon */
+    padding-right: 44px !important;
     box-sizing: border-box;
 }
 
@@ -233,15 +233,13 @@ table {
     line-height: 1;
     transition: color 0.2s;
     z-index: 2;
-    
-    /* THE FIX: Overrides the global button { width: 100%; } */
     width: auto; 
     height: auto;
 }
 
 .pw-toggle:hover { 
     color: var(--primary); 
-    box-shadow: none; /* Prevents inheriting the global button hover shadow */
+    box-shadow: none;
     background: transparent;
 }
 th { background: var(--primary-dark); color: white; padding: 18px; text-align: left; font-weight: 600; }
@@ -251,42 +249,100 @@ tr:hover td { background: #f8fbfd; }
 
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-/* ════════════════════════════════════════════════════
-   ADDED: Responsive — originals above are untouched
-   ════════════════════════════════════════════════════ */
-body { overflow-x: hidden; }
 
+/* ════════════════════════════════════════════════════
+   RESPONSIVE — fixed for all devices
+   ════════════════════════════════════════════════════ */
+
+/* Prevent horizontal scroll on all screen sizes */
+html, body { overflow-x: hidden; }
+
+/* ── Tablet & small desktop  ≤ 1024px ───────────────────── */
+@media (max-width: 1024px) {
+    .hero h1       { font-size: 3rem; }
+    .section-title { font-size: 2.2rem; }
+    .grid          { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
+}
+
+/* ── Tablet  ≤ 768px ─────────────────────────────────────── */
 @media (max-width: 768px) {
-    body           { background-attachment: scroll; }
-    nav            { padding: 1rem 5%; }
-    .hero          { height: 70vh; padding: 0 16px; background-attachment: scroll; }
+    /* Background: fixed attachment causes blank screen on iOS/Android */
+    body { background-attachment: scroll; }
+    .hero { background-attachment: scroll; }
+    .feedback-section-wrapper { background-attachment: scroll; }
+
+    /* Nav */
+    nav { padding: 1rem 5%; }
+
+    /* Hero */
+    .hero          { height: 70vh; padding: 0 16px; }
     .hero h1       { font-size: 2.2rem; }
     .hero p        { font-size: 1rem; margin-bottom: 1.8rem; }
     .btn-hero      { padding: 0.85rem 2rem; font-size: 0.95rem; }
+
+    /* Layout */
     .section-title { font-size: 1.7rem; padding: 8px 20px; margin: 2.5rem 0 1.5rem 0; }
     .container     { padding: 0 16px 40px 16px; }
     .grid          { grid-template-columns: 1fr; gap: 1.5rem; }
     .card img      { height: 190px; }
+
+    /* Auth */
     .auth-box      { margin: 2rem 16px; padding: 2rem 1.5rem; }
+
+    /* Tables */
     table          { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; font-size: 0.82rem; }
     th, td         { padding: 12px 14px; }
+
+    /* Feedback */
     .feedback-grid { flex-direction: column; overflow-x: visible; }
     .feedback-card { min-width: unset; width: 100%; padding: 20px; }
 }
 
+/* ── Small phones  ≤ 480px ───────────────────────────────── */
 @media (max-width: 480px) {
+    /* Hero */
+    .hero          { height: auto; min-height: 55vh; padding: 50px 14px; }
     .hero h1       { font-size: 1.8rem; }
     .hero p        { font-size: 0.9rem; }
+    .btn-hero      { padding: 0.75rem 1.6rem; font-size: 0.9rem; }
+
+    /* Layout */
     .section-title { font-size: 1.45rem; }
     .logo          { font-size: 1.3rem; }
     .auth-box      { margin: 1.5rem 12px; padding: 1.8rem 1.2rem; }
-    .btn-hero      { padding: 0.75rem 1.6rem; font-size: 0.9rem; }
     .card-content  { padding: 1.2rem; }
+    .card img      { height: 170px; }
+
+    /* Tables */
+    th, td         { padding: 10px 12px; font-size: 0.8rem; }
 }
 
+/* ── Extra small  ≤ 360px ────────────────────────────────── */
 @media (max-width: 360px) {
+    /* Hero */
+    .hero          { min-height: 50vh; padding: 40px 12px; }
     .hero h1       { font-size: 1.55rem; }
     .hero p        { font-size: 0.85rem; }
+    .btn-hero      { padding: 0.7rem 1.4rem; font-size: 0.85rem; }
+
+    /* Layout */
     .section-title { font-size: 1.3rem; padding: 6px 16px; }
     .auth-box      { margin: 1rem 10px; padding: 1.5rem 1rem; }
+    .logo          { font-size: 1.1rem; }
+    .logo span     { font-size: 0.82rem; }
+
+    /* Tables */
+    th, td         { padding: 9px 10px; font-size: 0.76rem; }
+}
+
+/* ── Minimum  ≤ 320px ────────────────────────────────────── */
+@media (max-width: 320px) {
+    .hero h1       { font-size: 1.35rem; }
+    .hero p        { font-size: 0.8rem; }
+    .section-title { font-size: 1.15rem; padding: 5px 12px; }
+    .auth-box      { margin: 0.8rem 8px; padding: 1.2rem 0.9rem; }
+    .logo          { font-size: 1rem; }
+    .logo span     { font-size: 0.75rem; }
+    .card-content  { padding: 1rem; }
+    th, td         { padding: 7px 8px; font-size: 0.72rem; }
 }
