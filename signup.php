@@ -46,24 +46,40 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 <style>
 /* Phone row: narrow code selector + wide number input */
-    .phone-row {
-        display: flex;
-        flex-direction: row;
-        gap: 10px;
-        align-items: stretch; /* Ensures both boxes are the exact same height */
-        width: 100%;
-    }
-    
+.phone-row {
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.phone-row select {
+    flex: 0 0 120px;
+    width: 120px !important;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+
+.phone-row input {
+    flex: 1 1 0;
+    min-width: 0;        /* THE KEY FIX — prevents flex overflow */
+    width: 0 !important;
+    box-sizing: border-box;
+}
+
+/* 320px fix — shrink the dropdown so the input has room */
+@media (max-width: 380px) {
+    .phone-row { gap: 6px; }
     .phone-row select {
-        flex: 0 0 120px;         /* Locks the dropdown width */
-        width: 120px !important; /* Overrides the global width: 100% */
-        cursor: pointer;
+        flex: 0 0 95px;
+        width: 95px !important;
+        font-size: 0.82rem;
+        padding-left: 6px;
+        padding-right: 6px;
     }
-    
-    .phone-row input {
-        flex: 1;                 /* Expands to fill all remaining space */
-        width: auto !important;  /* Overrides the global width: 100% */
-    }
+}
 </style>
 
 <div class="auth-box">
