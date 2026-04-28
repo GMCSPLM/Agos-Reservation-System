@@ -163,11 +163,26 @@
                 $new_hash = password_hash($new_pw, PASSWORD_DEFAULT);
                 $pdo->prepare("UPDATE users SET password_hash = ? WHERE user_id = ?")
                     ->execute([$new_hash, $current_user_id]);
+
+                // Clear the "must change password" flag. We key off user_id
+                // (always available from the session) rather than admin_id
+                // (which is only populated by the LEFT JOIN at the top of the
+                // file and could in rare edge cases be null) so this UPDATE
+                // is guaranteed to hit the right row.
                 $pdo->prepare("
                     UPDATE admin_profiles
                     SET must_change_password = 0, last_password_change = NOW()
-                    WHERE admin_id = ?
-                ")->execute([$current_admin['admin_id']]);
+                    WHERE user_id = ?
+                ")->execute([$current_user_id]);
+
+                // Keep the in-memory copy of the admin profile in sync, so
+                // that any later code in this same request (e.g. the admins
+                // list query) doesn't re-show the "Default password" badge
+                // for the user who just changed their password.
+                if (is_array($current_admin)) {
+                    $current_admin['must_change_password'] = 0;
+                }
+
                 $action_msg = "Password updated successfully.";
             }
         }
@@ -655,15 +670,30 @@
     // migration.sql). The forms only collect name / email / contact number.
 
     // --- Add a new customer record ------------------------------------------
+    // The admin must supply a password when creating a new customer; we then
+    // create both a `customers` row AND a linked `users` row (role='Customer')
+    // so the customer can log in immediately. Passwords are NEVER stored as
+    // plain text — they go through password_hash(PASSWORD_DEFAULT) which uses
+    // a strong adaptive bcrypt-family algorithm with a per-user random salt.
     if ($is_post && ($_POST['action'] ?? '') === 'add_customer') {
-        $c_name    = trim($_POST['full_name']     ?? '');
-        $c_email   = trim($_POST['email']         ?? '');
-        $c_contact = trim($_POST['contact_number'] ?? '');
+        $c_name     = trim($_POST['full_name']        ?? '');
+        $c_email    = trim($_POST['email']            ?? '');
+        $c_contact  = trim($_POST['contact_number']   ?? '');
+        $c_pwd      = (string)($_POST['password']         ?? '');
+        $c_pwd_conf = (string)($_POST['confirm_password'] ?? '');
 
         if ($c_name === '' || $c_email === '') {
             $action_err = "Full name and email are required.";
         } elseif (!filter_var($c_email, FILTER_VALIDATE_EMAIL)) {
             $action_err = "Please provide a valid email address.";
+        } elseif ($c_pwd === '' || $c_pwd_conf === '') {
+            $action_err = "Password and Confirm Password are required when creating a customer.";
+        } elseif ($c_pwd !== $c_pwd_conf) {
+            $action_err = "The Password and Confirm Password do not match.";
+        } elseif (strlen($c_pwd) < 8) {
+            $action_err = "Password must be at least 8 characters long.";
+        } elseif (!preg_match('/[A-Za-z]/', $c_pwd) || !preg_match('/\d/', $c_pwd)) {
+            $action_err = "Password must contain at least one letter and one number.";
         } else {
             // Reject duplicate email (UNIQUE INDEX on customers.email)
             $check = $pdo->prepare("SELECT customer_id FROM customers WHERE email = ? LIMIT 1");
@@ -671,25 +701,53 @@
             if ($check->fetchColumn()) {
                 $action_err = "A customer with that email already exists.";
             } else {
-                try {
-                    $pdo->prepare("
-                        INSERT INTO customers (full_name, email, contact_number)
-                        VALUES (?, ?, ?)
-                    ")->execute([$c_name, $c_email, ($c_contact !== '' ? $c_contact : null)]);
-                    $action_msg = "Customer <strong>" . htmlspecialchars($c_name) . "</strong> added successfully.";
-                } catch (Exception $e) {
-                    $action_err = "Could not add customer: " . htmlspecialchars($e->getMessage());
+                // Also reject if a login row (any role) already uses that email.
+                $check_user = $pdo->prepare("SELECT user_id FROM users WHERE username = ? LIMIT 1");
+                $check_user->execute([$c_email]);
+                if ($check_user->fetchColumn()) {
+                    $action_err = "A user account with that email already exists.";
+                } else {
+                    try {
+                        $pdo->beginTransaction();
+                        $pdo->prepare("
+                            INSERT INTO customers (full_name, email, contact_number)
+                            VALUES (?, ?, ?)
+                        ")->execute([$c_name, $c_email, ($c_contact !== '' ? $c_contact : null)]);
+                        $new_cid = (int)$pdo->lastInsertId();
+
+                        // Hash the password and create the linked Customer login.
+                        $hash = password_hash($c_pwd, PASSWORD_DEFAULT);
+                        $pdo->prepare("
+                            INSERT INTO users (username, password_hash, role, is_active, customer_id)
+                            VALUES (?, ?, 'Customer', 1, ?)
+                        ")->execute([$c_email, $hash, $new_cid]);
+
+                        $pdo->commit();
+                        $action_msg = "Customer <strong>" . htmlspecialchars($c_name)
+                                    . "</strong> added successfully with login credentials.";
+                    } catch (Exception $e) {
+                        $pdo->rollBack();
+                        $action_err = "Could not add customer: " . htmlspecialchars($e->getMessage());
+                    }
                 }
             }
         }
     }
 
     // --- Edit an existing customer -------------------------------------------
+    // The password fields are OPTIONAL on edit: if both are left blank, the
+    // customer's current password is preserved untouched. If they are filled,
+    // we validate them, hash, and update the linked `users` row. If the
+    // customer does not yet have a login row but the admin supplies a
+    // password, a new Customer-role login is created on the spot.
     if ($is_post && ($_POST['action'] ?? '') === 'edit_customer') {
-        $c_id      = (int)($_POST['customer_id']   ?? 0);
-        $c_name    = trim($_POST['full_name']      ?? '');
-        $c_email   = trim($_POST['email']          ?? '');
-        $c_contact = trim($_POST['contact_number'] ?? '');
+        $c_id       = (int)($_POST['customer_id']     ?? 0);
+        $c_name     = trim($_POST['full_name']        ?? '');
+        $c_email    = trim($_POST['email']            ?? '');
+        $c_contact  = trim($_POST['contact_number']   ?? '');
+        $c_pwd      = (string)($_POST['password']         ?? '');
+        $c_pwd_conf = (string)($_POST['confirm_password'] ?? '');
+        $changing_pw = ($c_pwd !== '' || $c_pwd_conf !== '');
 
         if ($c_id <= 0) {
             $action_err = "Invalid customer.";
@@ -697,6 +755,14 @@
             $action_err = "Full name and email are required.";
         } elseif (!filter_var($c_email, FILTER_VALIDATE_EMAIL)) {
             $action_err = "Please provide a valid email address.";
+        } elseif ($changing_pw && ($c_pwd === '' || $c_pwd_conf === '')) {
+            $action_err = "Please fill in both password fields, or leave both blank to keep the current password.";
+        } elseif ($changing_pw && $c_pwd !== $c_pwd_conf) {
+            $action_err = "The Password and Confirm Password do not match.";
+        } elseif ($changing_pw && strlen($c_pwd) < 8) {
+            $action_err = "Password must be at least 8 characters long.";
+        } elseif ($changing_pw && (!preg_match('/[A-Za-z]/', $c_pwd) || !preg_match('/\d/', $c_pwd))) {
+            $action_err = "Password must contain at least one letter and one number.";
         } else {
             // Confirm the customer exists
             $check = $pdo->prepare("SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1");
@@ -714,20 +780,57 @@
                     $action_err = "Another customer already uses that email address.";
                 } else {
                     try {
+                        $pdo->beginTransaction();
                         $pdo->prepare("
                             UPDATE customers
                             SET full_name = ?, email = ?, contact_number = ?
                             WHERE customer_id = ?
                         ")->execute([$c_name, $c_email, ($c_contact !== '' ? $c_contact : null), $c_id]);
 
-                        // Keep the linked users.username in sync if there's a login row
-                        $pdo->prepare("
-                            UPDATE users SET username = ?
-                            WHERE customer_id = ? AND role = 'Customer'
-                        ")->execute([$c_email, $c_id]);
+                        // Locate this customer's existing login (if any).
+                        $userStmt = $pdo->prepare("
+                            SELECT user_id FROM users
+                            WHERE customer_id = ? AND role = 'Customer' LIMIT 1
+                        ");
+                        $userStmt->execute([$c_id]);
+                        $existing_uid = $userStmt->fetchColumn();
 
-                        $action_msg = "Customer <strong>" . htmlspecialchars($c_name) . "</strong> updated.";
+                        if ($existing_uid) {
+                            // Customer has a login: keep username in sync with email,
+                            // and update password_hash only when the admin supplied one.
+                            if ($changing_pw) {
+                                $hash = password_hash($c_pwd, PASSWORD_DEFAULT);
+                                $pdo->prepare("
+                                    UPDATE users
+                                    SET username = ?, password_hash = ?
+                                    WHERE user_id = ?
+                                ")->execute([$c_email, $hash, $existing_uid]);
+                            } else {
+                                $pdo->prepare("
+                                    UPDATE users SET username = ?
+                                    WHERE user_id = ?
+                                ")->execute([$c_email, $existing_uid]);
+                            }
+                        } elseif ($changing_pw) {
+                            // No login yet — admin is creating one now. Make sure
+                            // the email isn't already used by a different account.
+                            $checkU = $pdo->prepare("SELECT user_id FROM users WHERE username = ? LIMIT 1");
+                            $checkU->execute([$c_email]);
+                            if ($checkU->fetchColumn()) {
+                                throw new RuntimeException("That email is already used by another login account.");
+                            }
+                            $hash = password_hash($c_pwd, PASSWORD_DEFAULT);
+                            $pdo->prepare("
+                                INSERT INTO users (username, password_hash, role, is_active, customer_id)
+                                VALUES (?, ?, 'Customer', 1, ?)
+                            ")->execute([$c_email, $hash, $c_id]);
+                        }
+
+                        $pdo->commit();
+                        $extra = $changing_pw ? ' Password updated.' : '';
+                        $action_msg = "Customer <strong>" . htmlspecialchars($c_name) . "</strong> updated." . $extra;
                     } catch (Exception $e) {
+                        $pdo->rollBack();
                         $action_err = "Could not update customer: " . htmlspecialchars($e->getMessage());
                     }
                 }
@@ -1722,6 +1825,10 @@
                 position: absolute;
                 top: 50%;
                 right: 6px;
+                /* The transform centers the button vertically; we re-declare
+                   it on every interactive state below to override any
+                   user-agent default :active transform that would otherwise
+                   nudge the button on click. */
                 transform: translateY(-50%);
                 width: 34px;
                 height: 34px;
@@ -1735,8 +1842,27 @@
                 align-items: center;
                 justify-content: center;
                 padding: 0;
+                margin: 0;
+                line-height: 1;
+                /* Don't transition transform — only colors & shadow — so even
+                   if a state briefly changes the transform we never animate
+                   the position. */
                 transition: color 0.18s, background 0.18s, box-shadow 0.18s;
                 font-family: inherit;
+                /* Suppress mobile tap highlight that can look like movement. */
+                -webkit-tap-highlight-color: transparent;
+                -webkit-user-select: none;
+                user-select: none;
+                -webkit-appearance: none;
+                appearance: none;
+            }
+            .password-toggle:hover,
+            .password-toggle:focus,
+            .password-toggle:focus-visible,
+            .password-toggle:active {
+                /* Lock the transform across every interactive pseudo-state so
+                   the button NEVER shifts position when clicked or focused. */
+                transform: translateY(-50%);
             }
             .password-toggle:hover {
                 color: var(--primary);
@@ -1748,11 +1874,40 @@
                 background: rgba(0,119,182,0.10);
                 box-shadow: 0 0 0 2px rgba(0,119,182,0.22);
             }
-            .password-toggle i { pointer-events: none; }
+            .password-toggle:active {
+                /* Override the browser's default active depress animation. */
+                background: rgba(0,119,182,0.14);
+            }
+            /* The icon glyph itself: fa-eye (576x512) and fa-eye-slash
+               (640x512) have different intrinsic widths in the FontAwesome
+               font, so swapping them visually shifts the icon inside the
+               button. Giving the <i> a fixed-width slot keeps it pinned. */
+            .password-toggle i {
+                pointer-events: none;
+                display: inline-block;
+                width: 18px;
+                text-align: center;
+                line-height: 1;
+            }
             /* Hide the native "reveal" widget Edge/IE add to password inputs so
             we don't end up with two competing eye icons. */
             .password-field input::-ms-reveal,
             .password-field input::-ms-clear { display: none; }
+
+            /* Inline feedback shown beneath "Confirm Password" — turns red when
+               the two values diverge and green once they match. Empty by
+               default so the form isn't cluttered before the admin types. */
+            .pw-feedback {
+                display: block;
+                margin-top: 6px;
+                font-size: 0.78rem;
+                min-height: 1em;
+                line-height: 1.2;
+            }
+            .pw-feedback.pw-bad { color: #e74c3c; }
+            .pw-feedback.pw-ok  { color: #27ae60; }
+            .pw-feedback.pw-ok::before { content: "\f00c"; font-family: "Font Awesome 5 Free"; font-weight: 900; margin-right: 5px; }
+            .pw-feedback.pw-bad::before { content: "\f071"; font-family: "Font Awesome 5 Free"; font-weight: 900; margin-right: 5px; }
 
             /* ─────────────────────────────────────────────────────────────
             BRANCHES MANAGEMENT VIEW
@@ -3372,9 +3527,10 @@
                 <div class="modal-overlay" id="addCustomerModal" onclick="if(event.target===this)closeModal('addCustomerModal')">
                     <div class="modal">
                         <h2><i class="fas fa-user-plus"></i> Add New Customer</h2>
-                        <p class="modal-subtitle">Create a new customer record. Customers added here can later sign up using the same email to claim their account.</p>
+                        <p class="modal-subtitle">Create a new customer record. The password you set here will be the customer's login credential.</p>
 
-                        <form method="POST" action="dashboard.php?view=customers">
+                        <form method="POST" action="dashboard.php?view=customers"
+                              id="addCustomerForm" onsubmit="return validateCustomerForm(this, false)" novalidate>
                             <input type="hidden" name="action" value="add_customer">
                             <div class="form-group">
                                 <label for="ac_full_name">Full Name</label>
@@ -3391,6 +3547,39 @@
                                 <input type="text" id="ac_contact" name="contact_number" maxlength="15"
                                     placeholder="e.g. 09171234567">
                             </div>
+                            <div class="form-group">
+                                <label for="ac_password">Password</label>
+                                <div class="password-field">
+                                    <input type="password" id="ac_password" name="password"
+                                        required minlength="8" autocomplete="new-password"
+                                        placeholder="At least 8 characters">
+                                    <button type="button" class="password-toggle"
+                                            data-target="ac_password"
+                                            aria-label="Show password" aria-pressed="false"
+                                            title="Show password">
+                                        <i class="fas fa-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="ac_confirm_password">Confirm Password</label>
+                                <div class="password-field">
+                                    <input type="password" id="ac_confirm_password" name="confirm_password"
+                                        required minlength="8" autocomplete="new-password"
+                                        placeholder="Re-enter password">
+                                    <button type="button" class="password-toggle"
+                                            data-target="ac_confirm_password"
+                                            aria-label="Show password" aria-pressed="false"
+                                            title="Show password">
+                                        <i class="fas fa-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <small class="pw-feedback" id="ac_pw_feedback" aria-live="polite"></small>
+                            </div>
+                            <div class="modal-info">
+                                <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:6px;"></i>
+                                Use at least 8 characters with both letters and numbers. Passwords are securely hashed before being stored.
+                            </div>
                             <div class="modal-actions">
                                 <button type="button" class="btn-cancel" onclick="closeModal('addCustomerModal')">Cancel</button>
                                 <button type="submit" class="btn-submit">
@@ -3405,9 +3594,10 @@
                 <div class="modal-overlay" id="editCustomerModal" onclick="if(event.target===this)closeModal('editCustomerModal')">
                     <div class="modal">
                         <h2><i class="fas fa-user-edit"></i> Edit Customer</h2>
-                        <p class="modal-subtitle">Update this customer's contact details. Changing the email also updates their login (if any).</p>
+                        <p class="modal-subtitle">Update this customer's details. Leave the password fields blank to keep the current password.</p>
 
-                        <form method="POST" action="dashboard.php?view=customers<?= $cust_search !== '' ? '&q=' . urlencode($cust_search) : '' ?>">
+                        <form method="POST" action="dashboard.php?view=customers<?= $cust_search !== '' ? '&q=' . urlencode($cust_search) : '' ?>"
+                              id="editCustomerForm" onsubmit="return validateCustomerForm(this, true)" novalidate>
                             <input type="hidden" name="action" value="edit_customer">
                             <input type="hidden" name="customer_id" id="ec_id">
                             <div class="form-group">
@@ -3421,6 +3611,39 @@
                             <div class="form-group">
                                 <label for="ec_contact">Contact Number</label>
                                 <input type="text" id="ec_contact" name="contact_number" maxlength="15">
+                            </div>
+                            <div class="form-group">
+                                <label for="ec_password">New Password <span style="color:#999;font-weight:400;">(optional)</span></label>
+                                <div class="password-field">
+                                    <input type="password" id="ec_password" name="password"
+                                        minlength="8" autocomplete="new-password"
+                                        placeholder="Leave blank to keep current">
+                                    <button type="button" class="password-toggle"
+                                            data-target="ec_password"
+                                            aria-label="Show password" aria-pressed="false"
+                                            title="Show password">
+                                        <i class="fas fa-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="ec_confirm_password">Confirm New Password</label>
+                                <div class="password-field">
+                                    <input type="password" id="ec_confirm_password" name="confirm_password"
+                                        minlength="8" autocomplete="new-password"
+                                        placeholder="Re-enter new password">
+                                    <button type="button" class="password-toggle"
+                                            data-target="ec_confirm_password"
+                                            aria-label="Show password" aria-pressed="false"
+                                            title="Show password">
+                                        <i class="fas fa-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <small class="pw-feedback" id="ec_pw_feedback" aria-live="polite"></small>
+                            </div>
+                            <div class="modal-info">
+                                <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:6px;"></i>
+                                To change the password, fill in BOTH fields (min. 8 characters with letters &amp; numbers). Otherwise leave both blank.
                             </div>
                             <div class="modal-actions">
                                 <button type="button" class="btn-cancel" onclick="closeModal('editCustomerModal')">Cancel</button>
@@ -3452,8 +3675,165 @@
                         document.getElementById('ec_full_name').value = c.name || '';
                         document.getElementById('ec_email').value     = c.email || '';
                         document.getElementById('ec_contact').value   = c.contact || '';
+                        // Always start with empty password fields on edit
+                        document.getElementById('ec_password').value         = '';
+                        document.getElementById('ec_confirm_password').value = '';
+                        var fb = document.getElementById('ec_pw_feedback');
+                        if (fb) { fb.textContent = ''; fb.className = 'pw-feedback'; }
                         openModal('editCustomerModal');
                     }
+
+                    /* ─────────────────────────────────────────────────────
+                       Show / Hide password toggle
+                       ─────────────────────────────────────────────────────
+                       Each .password-toggle button carries data-target="<input id>".
+                       Clicking flips the input's `type` between "password" and
+                       "text", swaps the eye / eye-slash icon, and updates the
+                       ARIA state for screen readers. The value is still hashed
+                       server-side via password_hash().                          */
+                    document.querySelectorAll('#addCustomerModal .password-toggle, #editCustomerModal .password-toggle').forEach(function (btn) {
+                        btn.addEventListener('click', function () {
+                            var input = document.getElementById(btn.dataset.target);
+                            if (!input) return;
+                            var icon = btn.querySelector('i');
+                            var showing = input.type === 'text';
+                            if (showing) {
+                                input.type = 'password';
+                                if (icon) { icon.classList.remove('fa-eye-slash'); icon.classList.add('fa-eye'); }
+                                btn.setAttribute('aria-pressed', 'false');
+                                btn.setAttribute('aria-label', 'Show password');
+                                btn.setAttribute('title', 'Show password');
+                            } else {
+                                input.type = 'text';
+                                if (icon) { icon.classList.remove('fa-eye'); icon.classList.add('fa-eye-slash'); }
+                                btn.setAttribute('aria-pressed', 'true');
+                                btn.setAttribute('aria-label', 'Hide password');
+                                btn.setAttribute('title', 'Hide password');
+                            }
+                        });
+                    });
+
+                    /* ─────────────────────────────────────────────────────
+                       Live "passwords match" feedback
+                       ─────────────────────────────────────────────────────
+                       Updates the small feedback line under "Confirm Password"
+                       as the admin types, and uses setCustomValidity() so the
+                       browser's own constraint API blocks submit when invalid. */
+                    function wireLiveMatch(pwdId, confId, feedbackId, optional) {
+                        var pwd  = document.getElementById(pwdId);
+                        var conf = document.getElementById(confId);
+                        var fb   = document.getElementById(feedbackId);
+                        if (!pwd || !conf) return;
+
+                        function evaluate() {
+                            var p = pwd.value, c = conf.value;
+
+                            // Optional mode (edit): both blank → valid, no message.
+                            if (optional && p === '' && c === '') {
+                                conf.setCustomValidity('');
+                                if (fb) { fb.textContent = ''; fb.className = 'pw-feedback'; }
+                                return;
+                            }
+                            // Optional mode: one filled, the other blank → invalid.
+                            if (optional && (p === '' || c === '')) {
+                                conf.setCustomValidity('Please fill in both password fields, or leave both blank.');
+                                if (fb) {
+                                    fb.textContent = 'Fill in both password fields, or leave both blank to keep the current password.';
+                                    fb.className   = 'pw-feedback pw-bad';
+                                }
+                                return;
+                            }
+                            // Required mode (add) or both filled in optional mode.
+                            if (c === '') {
+                                conf.setCustomValidity('Please confirm the password.');
+                                if (fb) { fb.textContent = ''; fb.className = 'pw-feedback'; }
+                                return;
+                            }
+                            if (p !== c) {
+                                conf.setCustomValidity('Passwords do not match.');
+                                if (fb) {
+                                    fb.textContent = 'Passwords do not match.';
+                                    fb.className   = 'pw-feedback pw-bad';
+                                }
+                            } else {
+                                conf.setCustomValidity('');
+                                if (fb) {
+                                    fb.textContent = 'Passwords match.';
+                                    fb.className   = 'pw-feedback pw-ok';
+                                }
+                            }
+                        }
+                        pwd.addEventListener('input', evaluate);
+                        conf.addEventListener('input', evaluate);
+                    }
+                    wireLiveMatch('ac_password', 'ac_confirm_password', 'ac_pw_feedback', false);
+                    wireLiveMatch('ec_password', 'ec_confirm_password', 'ec_pw_feedback', true);
+
+                    /* Form-level guard: re-evaluate at submit time and block
+                       the request if the passwords don't match. The server
+                       enforces the same rules — this is just a UX helper. */
+                    function validateCustomerForm(form, isEdit) {
+                        var pwd  = form.querySelector('input[name="password"]');
+                        var conf = form.querySelector('input[name="confirm_password"]');
+                        if (!pwd || !conf) return true;
+
+                        var p = pwd.value, c = conf.value;
+
+                        if (isEdit && p === '' && c === '') {
+                            return true; // keep current password
+                        }
+                        if (p === '' || c === '') {
+                            alert(isEdit
+                                ? 'Please fill in both password fields, or leave both blank to keep the current password.'
+                                : 'Please enter and confirm a password.');
+                            (p === '' ? pwd : conf).focus();
+                            return false;
+                        }
+                        if (p.length < 8) {
+                            alert('Password must be at least 8 characters long.');
+                            pwd.focus();
+                            return false;
+                        }
+                        if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) {
+                            alert('Password must contain at least one letter and one number.');
+                            pwd.focus();
+                            return false;
+                        }
+                        if (p !== c) {
+                            alert('The Password and Confirm Password do not match.');
+                            conf.focus();
+                            return false;
+                        }
+                        return true;
+                    }
+
+                    /* When either customer modal closes, reset password fields
+                       back to hidden + empty so the next open is clean. */
+                    ['addCustomerModal','editCustomerModal'].forEach(function (mid) {
+                        var modal = document.getElementById(mid);
+                        if (!modal) return;
+                        var observer = new MutationObserver(function () {
+                            if (!modal.classList.contains('open')) {
+                                modal.querySelectorAll('.password-field input').forEach(function (inp) {
+                                    inp.type = 'password';
+                                    inp.value = '';
+                                    inp.setCustomValidity('');
+                                });
+                                modal.querySelectorAll('.password-toggle').forEach(function (btn) {
+                                    var icon = btn.querySelector('i');
+                                    if (icon) { icon.classList.remove('fa-eye-slash'); icon.classList.add('fa-eye'); }
+                                    btn.setAttribute('aria-pressed', 'false');
+                                    btn.setAttribute('aria-label', 'Show password');
+                                    btn.setAttribute('title', 'Show password');
+                                });
+                                modal.querySelectorAll('.pw-feedback').forEach(function (fb) {
+                                    fb.textContent = '';
+                                    fb.className   = 'pw-feedback';
+                                });
+                            }
+                        });
+                        observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+                    });
                 </script>
 
             <?php elseif ($view === 'admins'): ?>
