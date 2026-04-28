@@ -816,7 +816,7 @@ if ($nextMonth > 12) {
     .calendar-grid       { gap: 3px; margin-top: 8px; }
     .calendar-day-header { padding: 7px 1px; font-size: 0.52rem; border-radius: 4px; }
     .calendar-day        { min-height: 72px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
-    .day-number          { font-size: 0.72rem; margin-bottom: 1px; font-weight: 700; }
+    .day-number { font-size: 0.72rem; margin-bottom: 1px; font-weight: 700; align-self: flex-start; }
     .day-status          { font-size: 0.38rem; padding: 1px 2px; border-radius: 3px; }
     .day-today .day-status { 
     font-size: 0.32rem; 
