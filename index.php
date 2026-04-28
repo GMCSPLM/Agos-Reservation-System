@@ -815,9 +815,10 @@ if ($nextMonth > 12) {
     .calendar-container  { padding: 0.8rem 0.4rem; }
     .calendar-grid       { gap: 3px; margin-top: 8px; }
     .calendar-day-header { padding: 7px 1px; font-size: 0.52rem; border-radius: 4px; }
-    .calendar-day        { min-height: 52px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
-    .day-number          { font-size: 0.78rem; margin-bottom: 2px; font-weight: 700; }
-    .day-status          { font-size: 0.4rem; padding: 1px 2px; border-radius: 3px; }
+    .calendar-day        { min-height: 58px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
+    .day-number          { font-size: 0.72rem; margin-bottom: 1px; font-weight: 700; }
+    .day-status          { font-size: 0.38rem; padding: 1px 2px; border-radius: 3px; }
+    .day-today::after    { font-size: 0.42rem; padding: 1px 4px; top: 2px; right: 3px; }
     .slot-pills          { gap: 1px; margin-top: 1px; }
     .slot-pill           { font-size: 0.38rem; padding: 1px 2px; border-radius: 4px; }
     .calendar-legend     { gap: 10px; padding: 10px; flex-wrap: wrap; justify-content: center; }
@@ -831,7 +832,7 @@ if ($nextMonth > 12) {
     .star-rating label   { font-size: 1.9rem; }
     .custom-textarea     { min-height: 110px; }
     .btn-submit-custom   { font-size: 0.92rem; }
-    .container > div[style*="max-width:1100px"] {
+    .container > div[style*="max-width:1100px"] { /* maintenance banner */
         flex-direction: column;
         gap: 8px;
         padding: 12px 14px;
@@ -1255,7 +1256,7 @@ if ($nextMonth > 12) {
         <?php if (!empty($amenityBranchList)): ?>
         <div class="amenity-filter">
             <label for="amenityBranchSelect">
-                <i></i>View by Branch:
+                <i class="fas fa-building"></i> View by Branch:
             </label>
             <select id="amenityBranchSelect" aria-label="Filter amenities by branch">
                 <?php foreach ($amenityBranchList as $i => $br): ?>
