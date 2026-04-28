@@ -1255,7 +1255,7 @@ if ($nextMonth > 12) {
         <?php if (!empty($amenityBranchList)): ?>
         <div class="amenity-filter">
             <label for="amenityBranchSelect">
-                <i class="fas fa-building"></i> View by Branch:
+                <i></i>View by Branch:
             </label>
             <select id="amenityBranchSelect" aria-label="Filter amenities by branch">
                 <?php foreach ($amenityBranchList as $i => $br): ?>

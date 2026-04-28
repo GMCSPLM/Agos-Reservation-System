@@ -1,47 +1,232 @@
 <?php 
 include 'header.php'; 
 
-// Capture pending booking intent from URL parameters
+// ════════════════════════════════════════════════════════════
+// SECURITY HELPERS
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Simple file-based rate limiter keyed by IP.
+ * Blocks brute-force and slows DDoS attempts on the login endpoint.
+ *
+ * @return array ['allowed' => bool, 'wait' => int|null, ...]
+ */
+function checkLoginRateLimit($maxAttempts = 5, $windowSeconds = 300, $lockoutSeconds = 900) {
+    $ip       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $hashedIp = hash('sha256', $ip);
+
+    $dir = __DIR__ . '/login_attempts';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0700, true);
+        // Block direct web access if anyone tries to browse the folder
+        @file_put_contents($dir . '/.htaccess', "Require all denied\nDeny from all\n");
+        @file_put_contents($dir . '/index.html', '');
+    }
+
+    $file = $dir . '/' . $hashedIp . '.json';
+    $now  = time();
+    $data = ['attempts' => [], 'locked_until' => 0];
+
+    if (file_exists($file)) {
+        $raw = @file_get_contents($file);
+        if ($raw) {
+            $decoded = @json_decode($raw, true);
+            if (is_array($decoded)) $data = $decoded + $data;
+        }
+    }
+
+    // Currently locked out?
+    if (!empty($data['locked_until']) && $data['locked_until'] > $now) {
+        return ['allowed' => false, 'wait' => $data['locked_until'] - $now];
+    }
+
+    // Drop attempts outside the sliding window
+    $data['attempts'] = array_values(array_filter(
+        $data['attempts'] ?? [],
+        fn($t) => ($now - (int)$t) < $windowSeconds
+    ));
+
+    if (count($data['attempts']) >= $maxAttempts) {
+        $data['locked_until'] = $now + $lockoutSeconds;
+        @file_put_contents($file, json_encode($data), LOCK_EX);
+        return ['allowed' => false, 'wait' => $lockoutSeconds];
+    }
+
+    return ['allowed' => true, 'data' => $data, 'file' => $file, 'now' => $now];
+}
+
+function recordFailedLogin(array $rateState) {
+    if (!isset($rateState['file'])) return;
+    $rateState['data']['attempts'][] = $rateState['now'];
+    @file_put_contents($rateState['file'], json_encode($rateState['data']), LOCK_EX);
+}
+
+function clearLoginAttempts() {
+    $ip       = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $hashedIp = hash('sha256', $ip);
+    $file     = __DIR__ . '/login_attempts/' . $hashedIp . '.json';
+    if (file_exists($file)) @unlink($file);
+}
+
+// ════════════════════════════════════════════════════════════
+// CSRF TOKEN
+// ════════════════════════════════════════════════════════════
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+$csrfToken = $_SESSION['csrf_token'];
+
+// ════════════════════════════════════════════════════════════
+// CAPTURE PENDING BOOKING INTENT (validated)
+// ════════════════════════════════════════════════════════════
 if ($_SERVER["REQUEST_METHOD"] == "GET") {
-    if (isset($_GET['redirect']) && $_GET['redirect'] === 'book' 
+    if (isset($_GET['redirect']) && $_GET['redirect'] === 'book'
         && !empty($_GET['date']) && !empty($_GET['branch'])) {
-        $_SESSION['pending_booking_date']   = $_GET['date'];
-        $_SESSION['pending_booking_branch'] = $_GET['branch'];
+
+        // Validate date as YYYY-MM-DD and branch as a safe short string
+        $dateOk   = (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['date'])
+                    && strtotime($_GET['date']) !== false;
+        $branchOk = (bool) preg_match('/^[A-Za-z0-9 _\-]{1,100}$/', $_GET['branch']);
+
+        if ($dateOk && $branchOk) {
+            $_SESSION['pending_booking_date']   = $_GET['date'];
+            $_SESSION['pending_booking_branch'] = $_GET['branch'];
+        } else {
+            unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
+        }
     } else {
         unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
     }
 }
 
+// ════════════════════════════════════════════════════════════
+// HANDLE LOGIN POST
+// ════════════════════════════════════════════════════════════
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $email = $_POST['email'];
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ?");
-    $stmt->execute([$email]);
-    $user = $stmt->fetch();
 
-    if ($user && password_verify($_POST['password'], $user['password_hash'])) {
-        $_SESSION['user_id']     = $user['user_id'];
-        $_SESSION['username']    = $user['username'];
-        $_SESSION['role']        = $user['role'];
-        $_SESSION['customer_id'] = $user['customer_id'];
-
-        if ($user['role'] == 'Admin') {
-            $redirect = "admin/dashboard.php";
-        } elseif (!empty($_SESSION['pending_booking_date']) && !empty($_SESSION['pending_booking_branch'])) {
-            $date   = urlencode($_SESSION['pending_booking_date']);
-            $branch = urlencode($_SESSION['pending_booking_branch']);
-            unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
-            $redirect = "book.php?date=$date&branch=$branch";
-        } else {
-            $redirect = "index.php";
-        }
-
-        echo "<script>window.location.href='$redirect';</script>";
-        exit;
+    // 1) CSRF check
+    if (empty($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $error = "Invalid request. Please refresh the page and try again.";
     } else {
-        $error = "Invalid credentials.";
+        // 2) Rate-limit check (per IP): 5 attempts / 5 min, 15 min lockout
+        $rate = checkLoginRateLimit(5, 300, 900);
+
+        if (!$rate['allowed']) {
+            $minutes = (int) ceil($rate['wait'] / 60);
+            $error   = "Too many login attempts. Please try again in {$minutes} minute(s).";
+        } else {
+            // 3) Validate email format and length
+            $email    = trim($_POST['email'] ?? '');
+            $password = $_POST['password'] ?? '';
+
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)
+                || strlen($email)    > 254
+                || strlen($password) > 1024     // hard cap to prevent absurd payloads
+                || $password === '') {
+                recordFailedLogin($rate);
+                $error = "Invalid credentials.";
+            } else {
+                // 4) Look up the user (already using a prepared statement → safe from SQLi)
+                $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
+                $stmt->execute([$email]);
+                $user = $stmt->fetch();
+
+                if ($user && password_verify($password, $user['password_hash'])) {
+                    // SUCCESS: prevent session fixation by issuing a fresh session ID
+                    session_regenerate_id(true);
+
+                    $_SESSION['user_id']     = $user['user_id'];
+                    $_SESSION['username']    = $user['username'];
+                    $_SESSION['role']        = $user['role'];
+                    $_SESSION['customer_id'] = $user['customer_id'];
+
+                    // Rotate CSRF token after auth state change
+                    $_SESSION['csrf_token']  = bin2hex(random_bytes(32));
+
+                    clearLoginAttempts();
+
+                    if ($user['role'] == 'Admin') {
+                        $redirect = "admin/dashboard.php";
+                    } elseif (!empty($_SESSION['pending_booking_date']) && !empty($_SESSION['pending_booking_branch'])) {
+                        $date   = urlencode($_SESSION['pending_booking_date']);
+                        $branch = urlencode($_SESSION['pending_booking_branch']);
+                        unset($_SESSION['pending_booking_date'], $_SESSION['pending_booking_branch']);
+                        $redirect = "book.php?date=$date&branch=$branch";
+                    } else {
+                        $redirect = "index.php";
+                    }
+
+                    // Proper HTTP redirect (no JS injection surface)
+                    header("Location: $redirect");
+                    exit;
+                } else {
+                    recordFailedLogin($rate);
+                    $error = "Invalid credentials.";
+                }
+            }
+        }
     }
 }
 ?>
+
+<!-- ═══════════════════════════════════════════
+     EYE-BUTTON FIX (lock position so the icon
+     swap between fa-eye and fa-eye-slash can't
+     shift the button). Uses !important to
+     override any conflicting rules in header.php.
+════════════════════════════════════════════ -->
+<style>
+    .pw-wrapper {
+        position: relative !important;
+        display: block !important;
+    }
+
+    .pw-wrapper input {
+        width: 100% !important;
+        padding-right: 44px !important;   /* reserve space for the toggle */
+        box-sizing: border-box !important;
+    }
+
+    .auth-box .pw-wrapper .pw-toggle,
+    .pw-wrapper .pw-toggle {
+        position: absolute !important;
+        top: 50% !important;
+        right: 12px !important;
+        left: auto !important;
+        transform: translateY(-50%) !important;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        cursor: pointer !important;
+        width: 28px !important;
+        height: 28px !important;
+        min-width: 28px !important;
+        max-width: 28px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        line-height: 1 !important;
+        box-shadow: none !important;
+        outline: none !important;
+    }
+
+    .pw-toggle:focus,
+    .pw-toggle:hover,
+    .pw-toggle:active { outline: none !important; box-shadow: none !important; }
+
+    /* Lock the icon to a fixed box. fa-fw on the <i> also helps,
+       but this guarantees the swap can never resize the click target. */
+    .pw-toggle i {
+        display: inline-block !important;
+        width: 18px !important;
+        min-width: 18px !important;
+        text-align: center !important;
+        line-height: 1 !important;
+        color: #666 !important;
+        pointer-events: none !important;
+    }
+</style>
 
 <!-- EmailJS SDK -->
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
@@ -54,16 +239,26 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 ════════════════════════════════════════════ -->
 <div class="auth-box" id="loginBox">
     <h2>Welcome Back</h2>
-    <?php if(isset($error)) echo "<p style='color:red; text-align:center;'>$error</p>"; ?>
-    <form method="POST">
+    <?php if (isset($error)) {
+        echo "<p style='color:red; text-align:center;'>"
+           . htmlspecialchars($error, ENT_QUOTES, 'UTF-8')
+           . "</p>";
+    } ?>
+    <form method="POST" autocomplete="on">
+        <input type="hidden" name="csrf_token"
+               value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
         <div class="form-group">
-            <input type="email" name="email" placeholder="Email Address" required>
+            <input type="email" name="email" placeholder="Email Address"
+                   maxlength="254" required>
         </div>
         <div class="form-group">
             <div class="pw-wrapper">
-                <input type="password" name="password" id="loginPassword" placeholder="Password" required>
-                <button type="button" class="pw-toggle" onclick="togglePw('loginPassword','loginEye')" tabindex="-1">
-                    <i class="fas fa-eye" id="loginEye"></i>
+                <input type="password" name="password" id="loginPassword"
+                       placeholder="Password" maxlength="1024" required>
+                <button type="button" class="pw-toggle"
+                        onclick="togglePw('loginPassword','loginEye')" tabindex="-1"
+                        aria-label="Show or hide password">
+                    <i class="fas fa-eye fa-fw" id="loginEye"></i>
                 </button>
             </div>
         </div>
@@ -124,8 +319,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <div class="form-group">
         <div class="pw-wrapper">
             <input type="password" id="newPassword" placeholder="New Password" required>
-            <button type="button" class="pw-toggle" onclick="togglePw('newPassword','eyeNew')" tabindex="-1">
-                <i class="fas fa-eye" id="eyeNew"></i>
+            <button type="button" class="pw-toggle" onclick="togglePw('newPassword','eyeNew')" tabindex="-1"
+                    aria-label="Show or hide password">
+                <i class="fas fa-eye fa-fw" id="eyeNew"></i>
             </button>
         </div>
     </div>
@@ -134,8 +330,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <div class="form-group">
         <div class="pw-wrapper">
             <input type="password" id="confirmPassword" placeholder="Confirm Password" required>
-            <button type="button" class="pw-toggle" onclick="togglePw('confirmPassword','eyeConfirm')" tabindex="-1">
-                <i class="fas fa-eye" id="eyeConfirm"></i>
+            <button type="button" class="pw-toggle" onclick="togglePw('confirmPassword','eyeConfirm')" tabindex="-1"
+                    aria-label="Show or hide password">
+                <i class="fas fa-eye fa-fw" id="eyeConfirm"></i>
             </button>
         </div>
     </div>

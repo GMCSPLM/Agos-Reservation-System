@@ -31,7 +31,7 @@ if ($search !== '') {
 
 // LEFT JOIN to users so we can include account status (pure read-only join,
 // keeps the export complete even for customers with no user account).
-// Note: the address column has been dropped from customers (see migration.sql),
+// Note: the `address` column has been dropped from `customers` (see migration.sql),
 // so it is no longer selected or exported here.
 $sql = "
     SELECT
