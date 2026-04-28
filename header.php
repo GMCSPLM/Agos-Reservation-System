@@ -148,14 +148,13 @@
 <!-- Outside nav so position:fixed works correctly -->
 <div class="nav-overlay" id="navOverlay"></div>
 <ul class="mobile-nav" id="mobileNav">
-    <li style="position:absolute; top:18px; right:18px;">
-    <button onclick="closeMenu()" id="mobileCloseBtn" aria-label="Close menu" style="
+    <li style="display: flex; justify-content: flex-end; padding-bottom: 8px;">
+    <button onclick="closeMenu()" aria-label="Close menu" style="
         background: none;
         border: 2px solid rgba(2,62,138,0.15);
         font-size: 1.2rem;
         cursor: pointer;
         color: #023e8a;
-        line-height: 1;
         width: 36px;
         height: 36px;
         border-radius: 50%;
