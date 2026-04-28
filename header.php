@@ -48,6 +48,7 @@
             .logo span  { display: none; }
             .btn-nav    { padding: 0.55rem 1rem !important; font-size: 0.8rem; }
             .btn-nav-reservations { padding: 5px 10px !important; font-size: 0.8rem !important; }
+            .mobile-close-btn { display: none !important; }
         }
 
         /* ══════════════════════════════════════════
@@ -147,6 +148,18 @@
 <!-- Outside nav so position:fixed works correctly -->
 <div class="nav-overlay" id="navOverlay"></div>
 <ul class="mobile-nav" id="mobileNav">
+    <li style="display:flex; justify-content:flex-end; padding: 0 4px 8px;" class="mobile-close-btn">
+        <button onclick="closeMenu()" style="
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #023e8a;
+            line-height: 1;
+            padding: 4px 8px;
+            border-radius: 8px;
+        " aria-label="Close menu">&#10005;</button>
+    </li>
     <li><a href="index.php">HOME</a></li>
     <li><a href="branches.php">BRANCHES</a></li>
     <li><a href="amenities.php">AMENITIES</a></li>
