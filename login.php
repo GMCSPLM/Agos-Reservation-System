@@ -172,46 +172,59 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <!-- ═══════════════════════════════════════════
      EYE-BUTTON FIX (lock position so the icon
      swap between fa-eye and fa-eye-slash can't
-     shift the button)
+     shift the button). Uses !important to
+     override any conflicting rules in header.php.
 ════════════════════════════════════════════ -->
 <style>
-    .pw-wrapper { position: relative; }
+    .pw-wrapper {
+        position: relative !important;
+        display: block !important;
+    }
 
     .pw-wrapper input {
-        width: 100%;
-        padding-right: 44px;   /* reserve space for the toggle */
-        box-sizing: border-box;
+        width: 100% !important;
+        padding-right: 44px !important;   /* reserve space for the toggle */
+        box-sizing: border-box !important;
     }
 
-    .pw-toggle {
-        position: absolute;
-        top: 50%;
-        right: 12px;
-        transform: translateY(-50%);
-        background: transparent;
-        border: none;
-        padding: 0;
-        margin: 0;
-        cursor: pointer;
-        width: 24px;
-        height: 24px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
+    .auth-box .pw-wrapper .pw-toggle,
+    .pw-wrapper .pw-toggle {
+        position: absolute !important;
+        top: 50% !important;
+        right: 12px !important;
+        left: auto !important;
+        transform: translateY(-50%) !important;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        cursor: pointer !important;
+        width: 28px !important;
+        height: 28px !important;
+        min-width: 28px !important;
+        max-width: 28px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        line-height: 1 !important;
+        box-shadow: none !important;
+        outline: none !important;
     }
 
-    .pw-toggle:focus { outline: none; }
+    .pw-toggle:focus,
+    .pw-toggle:hover,
+    .pw-toggle:active { outline: none !important; box-shadow: none !important; }
 
-    /* Lock icon width — fa-eye and fa-eye-slash render at slightly
-       different widths, which is what causes the button to "jump". */
+    /* Lock the icon to a fixed box. fa-fw on the <i> also helps,
+       but this guarantees the swap can never resize the click target. */
     .pw-toggle i {
-        display: inline-block;
-        width: 18px;
-        text-align: center;
-        line-height: 1;
-        color: #666;
-        pointer-events: none;
+        display: inline-block !important;
+        width: 18px !important;
+        min-width: 18px !important;
+        text-align: center !important;
+        line-height: 1 !important;
+        color: #666 !important;
+        pointer-events: none !important;
     }
 </style>
 
@@ -245,7 +258,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <button type="button" class="pw-toggle"
                         onclick="togglePw('loginPassword','loginEye')" tabindex="-1"
                         aria-label="Show or hide password">
-                    <i class="fas fa-eye" id="loginEye"></i>
+                    <i class="fas fa-eye fa-fw" id="loginEye"></i>
                 </button>
             </div>
         </div>
@@ -308,7 +321,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <input type="password" id="newPassword" placeholder="New Password" required>
             <button type="button" class="pw-toggle" onclick="togglePw('newPassword','eyeNew')" tabindex="-1"
                     aria-label="Show or hide password">
-                <i class="fas fa-eye" id="eyeNew"></i>
+                <i class="fas fa-eye fa-fw" id="eyeNew"></i>
             </button>
         </div>
     </div>
@@ -319,7 +332,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <input type="password" id="confirmPassword" placeholder="Confirm Password" required>
             <button type="button" class="pw-toggle" onclick="togglePw('confirmPassword','eyeConfirm')" tabindex="-1"
                     aria-label="Show or hide password">
-                <i class="fas fa-eye" id="eyeConfirm"></i>
+                <i class="fas fa-eye fa-fw" id="eyeConfirm"></i>
             </button>
         </div>
     </div>
