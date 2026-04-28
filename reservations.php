@@ -74,7 +74,7 @@ if (!isset($totalSpent))   $totalSpent   = 0;
     background: linear-gradient(rgba(255,255,255,0.3), rgba(255,255,255,0.3)), url('Ripple-Effect.png');
     background-size: cover;
     background-position: center;
-    background-attachment: fixed;
+    background-attachment: scroll;
     font-family: 'Poppins', sans-serif;
 }
 .page-hero {
@@ -300,12 +300,52 @@ if (!isset($totalSpent))   $totalSpent   = 0;
     text-decoration: none;
 }
 .btn-print-receipt i { font-size: 0.85rem; }
+/* Tablet and below */
+@media (max-width: 768px) {
+    .summary-strip  { max-width: 100%; padding: 0 0.75rem; }
+    .tab-bar        { margin: 1.5rem 1rem 0; }
+    .reservations-grid { padding: 0 0.75rem; }
+    .empty-state    { margin: 1.5rem 0.75rem 0; }
+}
+
+/* Large phones */
 @media (max-width: 640px) {
-    .res-card { flex-direction: column; }
-    .res-card-img { width: 100%; height: 180px; }
-    .summary-strip { gap: 0.6rem; }
-    .summary-card { padding: 0.9rem 0.6rem; }
+    .res-card           { flex-direction: column; }
+    .res-card-img       { width: 100%; height: 180px; min-height: unset; }
+    .res-card-body      { padding: 1rem 1.1rem; }
+    .summary-strip      { gap: 0.6rem; }
+    .summary-card       { padding: 0.9rem 0.6rem; }
     .summary-card .s-value { font-size: 1.5rem; }
+    .tab-btn            { font-size: 0.82rem; padding: 0.85rem 0.5rem; gap: 5px; }
+    .res-meta           { gap: 0.7rem; }
+    .res-meta-item      { font-size: 0.82rem; }
+}
+
+/* Small phones (375px) */
+@media (max-width: 420px) {
+    .page-hero          { padding: 2rem 1rem; }
+    .page-hero h1       { font-size: 1.5rem; }
+    .page-hero p        { font-size: 0.9rem; }
+    .customer-badge     { font-size: 0.82rem; padding: 7px 14px; }
+    .summary-strip      { grid-template-columns: repeat(3, 1fr); gap: 0.4rem; padding: 0 0.5rem; }
+    .summary-card       { padding: 0.75rem 0.4rem; }
+    .summary-card .s-value { font-size: 1.2rem; }
+    .summary-card .s-label { font-size: 0.7rem; }
+    .tab-btn            { font-size: 0.75rem; padding: 0.75rem 0.35rem; gap: 4px; }
+    .tab-count          { font-size: 0.65rem; padding: 2px 6px; min-width: 18px; }
+    .res-branch         { font-size: 1rem; }
+    .res-card-body      { padding: 0.9rem; }
+    .res-total          { font-size: 1rem; }
+    .res-footer         { gap: 0.75rem; }
+}
+
+/* Minimum (320px) */
+@media (max-width: 330px) {
+    .summary-strip      { grid-template-columns: 1fr; }
+    .tab-btn            { font-size: 0.7rem; padding: 0.7rem 0.25rem; }
+    .res-card-body      { padding: 0.75rem; }
+    .res-branch         { font-size: 0.95rem; }
+    .btn-print-receipt  { font-size: 0.75rem; padding: 6px 12px; }
 }
 </style>
 

@@ -473,6 +473,9 @@ if ($nextMonth > 12) {
     font-weight: 600;
     animation: fadeIn 0.3s;
 }
+@media (hover: none) {
+    .calendar-day.clickable:hover::after { display: none; }
+}
 
 @keyframes fadeIn {
     from { opacity: 0; }
@@ -673,9 +676,7 @@ if ($nextMonth > 12) {
         align-items: stretch;
     }
     
-    .branch-select {
-        width: 100%;
-    }
+    .branch-select { min-width: unset; width: 100%; }
     
     .calendar-grid {
         gap: 5px;
@@ -830,6 +831,19 @@ if ($nextMonth > 12) {
     .star-rating label   { font-size: 1.9rem; }
     .custom-textarea     { min-height: 110px; }
     .btn-submit-custom   { font-size: 0.92rem; }
+    .container > div[style*="max-width:1100px"] {
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 14px;
+        font-size: 0.85rem;
+    }
+    #booking-toast {
+    padding: 14px 20px;
+    font-size: 0.88rem;
+    width: 90%;
+    text-align: center;
+    border-radius: 14px;
+}
 }
 
 /* ── Very small phones ≤ 380px ── */
@@ -1220,6 +1234,17 @@ if ($nextMonth > 12) {
     .amenity-pagination { gap: 6px; }
     .amenity-pagination .ap-btn { min-width: 36px; height: 36px; font-size: 0.85rem; }
     .amenity-pagination .ap-info { width: 100%; text-align: center; margin-left: 0; margin-top: 4px; }
+}
+/* ── Tablet fix for feedback form (481px – 768px) ── */
+@media (min-width: 481px) and (max-width: 768px) {
+    .custom-form-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+    .feedback-section-wrapper { padding: 40px 0; background-attachment: scroll; }
+    .feedback-header          { flex-direction: column; gap: 10px; }
+    .header-split             { width: 100%; }
+    .header-split h3          { font-size: 1.3rem; }
 }
 </style>
 

@@ -442,6 +442,7 @@ if ($initialSliderBranchId !== null) {
     width: 100%;
     max-width: 490px;
     position: relative;
+    box-sizing: border-box;
 }
 /* Gradient accent bar at top */
 .book-form-card::before {
@@ -906,51 +907,63 @@ if ($initialSliderBranchId !== null) {
 .book-form-card     { animation: fadeSlideLeft 0.55s ease 0.10s both; }
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
+
+/* Tablet landscape & below */
 @media (max-width: 920px) {
     .book-page-wrapper   { flex-direction: column; }
-    .book-hero-panel     { min-height: 360px; }
+    .book-hero-panel     { min-height: 300px; flex: none; }
     .gallery-overlay     { left: 28px; right: 28px; bottom: 28px; }
     .gallery-dots        { right: 28px; bottom: 14px; }
     .book-form-panel     { min-height: auto; padding: 30px 20px 50px; }
-    .book-form-card      { padding: 32px 26px; }
+    .book-form-card      { padding: 32px 26px; max-width: 100%; }
 }
+
+/* Tablet portrait */
+@media (max-width: 768px) {
+    .book-form-panel     { padding: 24px 16px 40px; }
+    .book-form-card      { padding: 28px 22px; }
+    .book-price-summary  { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .book-trust-strip    { gap: 12px; }
+}
+
+/* Large phones */
 @media (max-width: 500px) {
-    .book-hero-panel     { min-height: 300px; }
+    .book-hero-panel     { min-height: 260px; }
     .gallery-overlay     { left: 18px; right: 18px; bottom: 18px; }
     .gallery-dots        { right: 18px; bottom: 10px; }
     .gallery-nav         { width: 36px; height: 36px; font-size: 0.82rem; }
-    .gallery-nav.prev    { left: 12px; }
-    .gallery-nav.next    { right: 12px; }
-    .gallery-counter     { top: 14px; right: 14px; padding: 4px 10px; font-size: 0.68rem; }
-    .book-form-card      { padding: 26px 18px; border-radius: 18px; }
+    .gallery-nav.prev    { left: 10px; }
+    .gallery-nav.next    { right: 10px; }
+    .gallery-counter     { top: 12px; right: 12px; padding: 4px 10px; font-size: 0.68rem; }
+    .book-form-panel     { padding: 20px 12px 36px; }
+    .book-form-card      { padding: 26px 18px; border-radius: 18px; width: 100%; box-sizing: border-box; }
     .tour-type-grid      { grid-template-columns: 1fr; }
     .book-step-label     { display: none; }
+    .book-trust-strip    { gap: 10px; }
+    .book-trust-item     { font-size: 0.65rem; }
 }
-/* ── ADDED: 320px–375px screens ── */
+
+/* Small phones (375px and below) */
 @media (max-width: 375px) {
-    .book-hero-panel     { padding: 28px 16px 24px; background-attachment: scroll; }
-    .book-hero-title     { font-size: 1.55rem; }
-    .book-hero-subtitle  { font-size: 0.82rem; margin-bottom: 24px; }
-    .book-hero-badge     { font-size: 0.67rem; padding: 5px 14px; }
-    .book-form-panel     { padding: 20px 14px 40px; }
-    .book-form-card      { padding: 22px 14px; border-radius: 16px; max-width: 100%; }
+    .book-hero-panel     { min-height: 220px; }
+    .book-form-panel     { padding: 16px 10px 32px; }
+    .book-form-card      { padding: 22px 14px; border-radius: 16px; }
     .book-form-heading   { font-size: 1.35rem; }
+    .book-form-subheading{ font-size: 0.78rem; }
     .book-steps          { margin-bottom: 20px; }
     .book-step-num       { width: 26px; height: 26px; font-size: 0.7rem; }
     .bk-input            { padding: 11px 13px; font-size: 0.88rem; }
     .tour-type-grid      { gap: 10px; }
     .tour-type-lbl       { padding: 16px 10px 13px; }
     .tt-price            { font-size: 1rem; }
-    .book-price-summary  { padding: 13px 14px; }
+    .book-price-summary  { padding: 12px 14px; }
     .book-price-amount   { font-size: 1.35rem; }
     .book-submit-btn     { padding: 13px 18px; font-size: 0.88rem; }
-    .book-feature-item   { min-width: 120px; font-size: 0.8rem; }
-    .book-feature-icon   { width: 32px; height: 32px; font-size: 0.78rem; }
 }
 
-/* ── ADDED: 320px absolute minimum ── */
+/* Minimum supported width (320px) */
 @media (max-width: 330px) {
-    .book-hero-title     { font-size: 1.35rem; }
+    .book-hero-panel     { min-height: 180px; }
     .book-form-card      { padding: 18px 12px; }
     .book-form-heading   { font-size: 1.2rem; }
     .bk-input            { padding: 10px 11px; font-size: 0.84rem; }
