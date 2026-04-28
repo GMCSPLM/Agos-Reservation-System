@@ -805,47 +805,47 @@ if ($nextMonth > 12) {
     }
 }
 
-/* ── Small screens: calendar + feedback form ── */
+/* ── Small screens ≤ 480px ── */
 @media (max-width: 480px) {
-    .calendar-controls   { padding: 16px 12px; gap: 12px; }
-    .current-month       { font-size: 1rem; min-width: unset; }
-    .nav-btn             { padding: 8px 12px; font-size: 0.8rem; gap: 4px; }
-    .branch-select       { min-width: unset; width: 100%; }
-    .calendar-container  { padding: 1rem 0.5rem; overflow-x: auto; }
-    .calendar-grid       { gap: 3px; margin-top: 10px; min-width: unset; }
-    .calendar-day-header { padding: 8px 2px; font-size: 0.55rem; border-radius: 4px; }
-    .calendar-day        { min-height: 54px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
-    .day-number          { font-size: 0.8rem; margin-bottom: 2px; }
-    .day-status          { font-size: 0.42rem; padding: 1px 3px; border-radius: 3px; }
+    .calendar-controls   { padding: 14px 10px; gap: 10px; }
+    .current-month       { font-size: 0.95rem; min-width: unset; }
+    .nav-btn             { padding: 7px 10px; font-size: 0.78rem; gap: 4px; }
+    .branch-select       { min-width: unset; width: 100%; font-size: 0.88rem; }
+    .calendar-container  { padding: 0.8rem 0.4rem; }
+    .calendar-grid       { gap: 3px; margin-top: 8px; }
+    .calendar-day-header { padding: 7px 1px; font-size: 0.52rem; border-radius: 4px; }
+    .calendar-day        { min-height: 52px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
+    .day-number          { font-size: 0.78rem; margin-bottom: 2px; font-weight: 700; }
+    .day-status          { font-size: 0.4rem; padding: 1px 2px; border-radius: 3px; }
     .slot-pills          { gap: 1px; margin-top: 1px; }
-    .slot-pill           { font-size: 0.4rem; padding: 1px 2px; border-radius: 4px; }
-    .calendar-legend     { gap: 10px; padding: 10px; flex-wrap: wrap; }
-    .legend-item         { font-size: 0.7rem; }
+    .slot-pill           { font-size: 0.38rem; padding: 1px 2px; border-radius: 4px; }
+    .calendar-legend     { gap: 10px; padding: 10px; flex-wrap: wrap; justify-content: center; }
+    .legend-item         { font-size: 0.7rem; gap: 5px; }
     .legend-box          { width: 12px; height: 12px; }
     .feedback-section-wrapper { padding: 30px 0; background-attachment: scroll; }
     .feedback-header     { flex-direction: column; gap: 8px; margin-bottom: 14px; }
     .header-split        { width: 100%; }
     .header-split h3     { font-size: 1.1rem; white-space: normal; }
     .custom-form-grid    { grid-template-columns: 1fr; gap: 14px; }
-    .star-rating label   { font-size: 2rem; }
+    .star-rating label   { font-size: 1.9rem; }
     .custom-textarea     { min-height: 110px; }
+    .btn-submit-custom   { font-size: 0.92rem; }
 }
 
-/* ── Very small screens 320px–400px ── */
-@media (max-width: 400px) {
-    .calendar-day        { min-height: 46px; padding: 3px 1px; }
-    .calendar-day-header { font-size: 0.48rem; padding: 6px 1px; }
-    .day-number          { font-size: 0.72rem; }
-    .day-status          { font-size: 0.38rem; padding: 1px 2px; }
-    .slot-pill           { font-size: 0.36rem; }
-    .current-month       { font-size: 0.88rem; }
-    .nav-btn             { padding: 6px 10px; font-size: 0.75rem; }
-    .header-split h3     { font-size: 0.95rem; margin: 0 6px; }
+/* ── Very small phones ≤ 380px ── */
+@media (max-width: 380px) {
+    .calendar-day        { min-height: 44px; padding: 3px 1px; }
+    .calendar-day-header { font-size: 0.46rem; padding: 5px 1px; }
+    .day-number          { font-size: 0.7rem; }
+    .day-status          { font-size: 0.36rem; }
+    .slot-pill           { font-size: 0.34rem; }
+    .current-month       { font-size: 0.85rem; }
+    .nav-btn             { padding: 6px 8px; font-size: 0.72rem; }
+    .header-split h3     { font-size: 0.95rem; }
     .custom-input        { padding: 10px; font-size: 0.85rem; }
     .custom-textarea     { min-height: 90px; font-size: 0.85rem; padding: 10px; }
-    .star-rating         { gap: 3px; }
-    .star-rating label   { font-size: 1.6rem; }
-    .btn-submit-custom   { font-size: 0.88rem; padding: 8px 14px; }
+    .star-rating label   { font-size: 1.55rem; }
+    .btn-submit-custom   { font-size: 0.86rem; padding: 9px 14px; }
 }
 </style>
 
