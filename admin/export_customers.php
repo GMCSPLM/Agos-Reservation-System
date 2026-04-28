@@ -31,13 +31,14 @@ if ($search !== '') {
 
 // LEFT JOIN to users so we can include account status (pure read-only join,
 // keeps the export complete even for customers with no user account).
+// Note: the `address` column has been dropped from `customers` (see migration.sql),
+// so it is no longer selected or exported here.
 $sql = "
     SELECT
         c.customer_id,
         c.full_name,
         c.email,
         c.contact_number,
-        c.address,
         c.created_at,
         COALESCE((
             SELECT COUNT(*) FROM reservations r WHERE r.customer_id = c.customer_id
@@ -77,7 +78,6 @@ fputcsv($output, [
     'Full Name',
     'Email',
     'Contact Number',
-    'Address',
     'Total Reservations',
     'Last Reservation',
     'Account Status',
@@ -103,7 +103,6 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $row['full_name'],
         $row['email'],
         $row['contact_number'] ?? '',
-        $row['address'] ?? '',
         (int)$row['total_reservations'],
         $last_res,
         $status,
