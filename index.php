@@ -818,6 +818,8 @@ if ($nextMonth > 12) {
     .calendar-day        { min-height: 58px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
     .day-number          { font-size: 0.72rem; margin-bottom: 1px; font-weight: 700; }
     .day-status          { font-size: 0.38rem; padding: 1px 2px; border-radius: 3px; }
+    .day-today .day-status  { display: none; }
+    .day-today .slot-pills  { display: none; }
     .day-today::after    { font-size: 0.42rem; padding: 1px 4px; top: 2px; right: 3px; }
     .slot-pills          { gap: 1px; margin-top: 1px; }
     .slot-pill           { font-size: 0.38rem; padding: 1px 2px; border-radius: 4px; }
