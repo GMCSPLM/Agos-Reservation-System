@@ -37,8 +37,7 @@ if (!$userRow || !$userRow['customer_id']) {
             r.status,
             r.created_at,
             b.branch_name,
-            b.location,
-            b.image_url
+            b.location
         FROM reservations r
         JOIN branches b ON r.branch_id = b.branch_id
         WHERE r.customer_id = ?
@@ -375,7 +374,9 @@ if (!isset($totalSpent))   $totalSpent   = 0;
                 };
             ?>
                 <div class="res-card">
-                    <img class="res-card-img" src="<?= htmlspecialchars($res['image_url'] ?? '') ?>" alt="<?= htmlspecialchars($res['branch_name']) ?>" loading="lazy">
+                    <?php if (!empty($res['image_url'])): ?>
+                    <img class="res-card-img" src="<?= htmlspecialchars($res['image_url']) ?>" alt="<?= htmlspecialchars($res['branch_name']) ?>" loading="lazy">
+                    <?php endif; ?>
                     <div class="res-card-body">
                         <div class="res-card-top">
                             <div>
@@ -429,7 +430,9 @@ if (!isset($totalSpent))   $totalSpent   = 0;
                 };
             ?>
                 <div class="res-card" style="opacity:0.75;">
-                    <img class="res-card-img" src="<?= htmlspecialchars($res['image_url'] ?? '') ?>" alt="<?= htmlspecialchars($res['branch_name']) ?>" loading="lazy">
+                    <?php if (!empty($res['image_url'])): ?>
+                    <img class="res-card-img" src="<?= htmlspecialchars($res['image_url']) ?>" alt="<?= htmlspecialchars($res['branch_name']) ?>" loading="lazy">
+                    <?php endif; ?>
                     <div class="res-card-body">
                         <div class="res-card-top">
                             <div>
@@ -485,7 +488,9 @@ if (!isset($totalSpent))   $totalSpent   = 0;
                 };
             ?>
                 <div class="res-card" <?= $isPast ? 'style="opacity:0.75;"' : '' ?>>
-                    <img class="res-card-img" src="<?= htmlspecialchars($res['image_url'] ?? '') ?>" alt="<?= htmlspecialchars($res['branch_name']) ?>" loading="lazy">
+                    <?php if (!empty($res['image_url'])): ?>
+                    <img class="res-card-img" src="<?= htmlspecialchars($res['image_url']) ?>" alt="<?= htmlspecialchars($res['branch_name']) ?>" loading="lazy">
+                    <?php endif; ?>
                     <div class="res-card-body">
                         <div class="res-card-top">
                             <div>
