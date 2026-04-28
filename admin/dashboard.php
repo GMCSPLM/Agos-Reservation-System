@@ -2401,9 +2401,34 @@
             .res-date-filter .rd-reset:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
 
             @media (max-width: 760px) {
-                .res-date-filter { width: 100%; margin-left: 0; flex-wrap: wrap; }
+            .res-date-filter {
+            width: 100%;
+            margin-left: 0;
+            flex-wrap: wrap;
+            border-radius: 14px;
+            padding: 8px 10px;
+            gap: 8px;
+         }
+            .res-date-filter select {
+                flex: 1 1 auto;
+                min-width: 0;
+                width: 100%;
             }
-
+            .res-date-filter button {
+                width: 100%;
+                justify-content: center;
+                padding: 8px 14px;
+            }
+            .res-date-filter .rd-label {
+                width: 100%;
+            }
+        }
+        @media (max-width: 480px) {
+                .res-date-filter .rd-label { font-size: 0.72rem; }
+                th, td { padding: 7px 7px; font-size: 0.74rem; white-space: nowrap; }
+                .filter-btn { font-size: 0.72rem; padding: 4px 8px; gap: 3px; }
+                .filter-btn span { display: none; }
+            }
             /* ─────────────────────────────────────────────────────────────
             AMENITIES MANAGEMENT VIEW
             ───────────────────────────────────────────────────────────── */
