@@ -1,4 +1,4 @@
-    <?php
+<?php
     include '../db.php';
 
     if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'Admin') {
@@ -1168,6 +1168,7 @@
     <html lang="en">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Admin Panel | CheckMates</title>
         <link rel="stylesheet" href="../css/style.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -1266,7 +1267,7 @@
             /* Charts */
             .charts-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
                 gap: 1.5rem;
                 margin-bottom: 2rem;
             }
@@ -1549,7 +1550,7 @@
                 background: white; border: 2px solid rgba(0,119,182,0.2);
                 border-radius: 50px; padding: 4px 4px 4px 16px;
                 transition: border-color 0.2s, box-shadow 0.2s;
-                min-width: 280px;
+                min-width: min(280px, 100%);
             }
             .search-box:focus-within {
                 border-color: var(--primary);
@@ -1780,7 +1781,7 @@
             /* Branch admin grid */
             .branch-admin-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+                grid-template-columns: repeat(auto-fill, minmax(min(1000%, 400px), 1fr));
                 gap: 1.5rem;
             }
             .branch-admin-card {
@@ -2010,6 +2011,110 @@
                 .maint-toggle-card { flex-direction: column; align-items: flex-start; }
             }
 
+            /* ══════════════════════════════════════════════════════
+               RESPONSIVE — mobile / tablet support
+               ══════════════════════════════════════════════════════ */
+            html, body { overflow-x: hidden; }
+
+            .mob-topbar {
+                display: none;
+                position: fixed;
+                top: 0; left: 0; right: 0; height: 56px;
+                background: rgba(255,255,255,0.97);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                z-index: 1200;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 1rem;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            }
+            .mob-brand {
+                font-size: 1.15rem; font-weight: 700;
+                color: var(--primary-dark);
+                display: flex; align-items: center; gap: 8px;
+            }
+            .mob-brand i { color: var(--secondary); }
+            .mob-hamburger {
+                display: flex; flex-direction: column;
+                justify-content: center; align-items: center;
+                gap: 5px; width: 40px; height: 40px;
+                background: none; border: none;
+                cursor: pointer; border-radius: 10px;
+                padding: 6px; transition: background 0.2s; flex-shrink: 0;
+            }
+            .mob-hamburger:hover { background: rgba(0,119,182,0.08); box-shadow: none; transform: none; }
+            .mob-hamburger span  { display: block; width: 22px; height: 2px; background: var(--primary-dark); border-radius: 2px; transition: all 0.3s ease; }
+            .mob-hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+            .mob-hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+            .mob-hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+            .sidebar-overlay {
+                display: none; position: fixed; inset: 0;
+                background: rgba(0,0,0,0.45); z-index: 1299; cursor: pointer;
+            }
+            .sidebar-overlay.open { display: block; }
+
+            .sidebar-close {
+                display: none; position: absolute; top: 14px; right: 14px;
+                width: 32px; height: 32px; background: rgba(0,119,182,0.08);
+                border: none; border-radius: 50%; color: var(--primary-dark);
+                font-size: 0.9rem; cursor: pointer;
+                align-items: center; justify-content: center;
+                transition: background 0.2s, color 0.2s; flex-shrink: 0;
+            }
+            .sidebar-close:hover { background: rgba(239,71,111,0.12); color: #ef476f; box-shadow: none; transform: none; }
+
+            @media (max-width: 960px) {
+                .mob-topbar { display: flex; }
+                body.has-mobile-nav { padding-top: 56px; }
+                .sidebar {
+                    position: fixed !important;
+                    top: 0; left: 0; height: 100vh;
+                    z-index: 1300; width: 250px !important;
+                    transform: translateX(-100%);
+                    transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+                    padding-top: 64px;
+                }
+                .sidebar.open { transform: translateX(0); box-shadow: 6px 0 30px rgba(0,0,0,0.18); }
+                .sidebar-close { display: flex; }
+                body { display: block !important; }
+                .main-content { padding: 1.5rem 1.2rem; }
+                .charts-grid { grid-template-columns: 1fr !important; }
+                .stats-grid  { grid-template-columns: repeat(2,1fr) !important; }
+                .branch-admin-grid { grid-template-columns: repeat(2,1fr) !important; }
+                .chart-container { height: 240px !important; }
+            }
+
+            @media (max-width: 640px) {
+                .main-content { padding: 1rem 0.85rem; }
+                .glass-panel  { padding: 1.2rem 1rem; }
+                h1            { font-size: 1.5rem !important; }
+                .stats-grid   { grid-template-columns: 1fr !important; }
+                table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; font-size: 0.82rem; }
+                th, td { padding: 10px 12px; }
+                .customers-toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+                .action-buttons { flex-wrap: wrap; gap: 6px; }
+                .btn-action { font-size: 0.78rem; padding: 5px 11px; }
+                .filter-btn { font-size: 0.78rem; padding: 6px 11px; }
+                .branch-admin-grid { grid-template-columns: 1fr !important; }
+                .maint-toggle-card { flex-direction: column; align-items: flex-start; gap: 0.8rem; }
+                .feedback-grid { grid-template-columns: 1fr !important; }
+                .pagination { flex-wrap: wrap; justify-content: center; gap: 4px; }
+                .page-info  { width: 100%; text-align: center; margin: 0; }
+                .af-header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+                .chart-container { height: 200px !important; }
+                .modal-actions { flex-direction: column-reverse; gap: 8px; }
+                .btn-cancel, .btn-submit { width: 100%; text-align: center; }
+            }
+
+            @media (max-width: 400px) {
+                .mob-brand { font-size: 1rem; }
+                .glass-panel { padding: 1rem 0.75rem; }
+                h1 { font-size: 1.25rem !important; }
+                .filter-btn { font-size: 0.72rem; padding: 5px 9px; }
+            }
+
             /* ─────────────────────────────────────────────────────────────
             CUSTOMER ROW ACTIONS (edit / delete inline buttons)
             ───────────────────────────────────────────────────────────── */
@@ -2185,9 +2290,27 @@
             }
         </style>
     </head>
-    <body>
+    <body class="has-mobile-nav">
 
-        <nav class="sidebar">
+        <!-- Mobile top bar — visible on tablet/phone only -->
+        <div class="mob-topbar" id="mobTopbar">
+            <div class="mob-brand">
+                <i class="fas fa-water"></i> CheckMates
+                <span style="font-size:0.78rem;font-weight:500;color:var(--secondary);letter-spacing:1px;">ADMIN</span>
+            </div>
+            <button class="mob-hamburger" id="mobHamburger" aria-label="Toggle navigation">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+
+        <!-- Sidebar dark overlay — tap to close -->
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+        <nav class="sidebar" id="adminSidebar">
+            <!-- Close button — mobile only -->
+            <button class="sidebar-close" id="sidebarClose" aria-label="Close menu">
+                <i class="fas fa-times"></i>
+            </button>
             <div class="brand">
                 <i class="fas fa-water" style="color: var(--secondary);"></i> CheckMates
             </div>
@@ -2234,6 +2357,39 @@
                 </li>
             </ul>
         </nav>
+
+        <!-- Sidebar toggle script -->
+        <script>
+        (function() {
+            var sidebar   = document.getElementById('adminSidebar');
+            var overlay   = document.getElementById('sidebarOverlay');
+            var hamburger = document.getElementById('mobHamburger');
+            var closeBtn  = document.getElementById('sidebarClose');
+            function openSidebar()  {
+                sidebar.classList.add('open');
+                overlay.classList.add('open');
+                hamburger.classList.add('open');
+                document.body.style.overflow = 'hidden';
+            }
+            function closeSidebar() {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('open');
+                hamburger.classList.remove('open');
+                document.body.style.overflow = '';
+            }
+            if (hamburger) hamburger.addEventListener('click', function() {
+                sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+            });
+            if (overlay)  overlay.addEventListener('click', closeSidebar);
+            if (closeBtn) closeBtn.addEventListener('click', closeSidebar);
+            sidebar.querySelectorAll('a').forEach(function(a) {
+                a.addEventListener('click', closeSidebar);
+            });
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') closeSidebar();
+            });
+        })();
+        </script>
 
         <div class="main-content">
 
@@ -3844,3 +4000,4 @@
 
     </body>
     </html>
+    
