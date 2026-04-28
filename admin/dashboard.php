@@ -1,4 +1,4 @@
-    <?php
+<?php
     include '../db.php';
 
     if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'Admin') {
@@ -1545,35 +1545,80 @@
                 gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem;
             }
             .search-box {
-                display: flex; align-items: center; gap: 0;
+                display: flex; align-items: center; gap: 10px;
                 background: white; border: 2px solid rgba(0,119,182,0.2);
-                border-radius: 50px; padding: 4px 4px 4px 16px;
+                border-radius: 50px; padding: 5px 6px 5px 18px;
                 transition: border-color 0.2s, box-shadow 0.2s;
-                min-width: 280px;
+                width: 100%;
+                min-width: 320px;
+                max-width: 480px;
             }
             .search-box:focus-within {
                 border-color: var(--primary);
                 box-shadow: 0 0 0 3px rgba(0,119,182,0.12);
             }
-            .search-box i { color: var(--primary); margin-right: 8px; }
+            .search-box i {
+                color: var(--primary);
+                flex-shrink: 0;
+                font-size: 0.95rem;
+            }
+            /* Override the global `input, select, textarea { width:100%; padding:1rem; ... }` rule from style.css */
+            .search-box input[type="search"],
             .search-box input {
-                border: none; outline: none; flex: 1;
-                font-size: 0.88rem; padding: 7px 4px; background: transparent;
+                border: none !important;
+                outline: none;
+                flex: 1 1 auto;
+                width: auto;
+                min-width: 0;
+                font-size: 0.88rem;
+                padding: 8px 6px;
+                background: transparent !important;
                 color: #2c3e50;
+                line-height: 1.3;
+                border-radius: 0;
+                box-shadow: none;
             }
+            /* Override the global `button { width:100%; padding:1rem; background:gradient; ... }` rule from style.css.
+               Without `width:auto` the button stretches to fill the flex row and hides the input. */
             .search-box button {
-                background: var(--primary); color: white; border: none;
-                padding: 7px 18px; border-radius: 50px; font-weight: 600;
-                cursor: pointer; font-size: 0.82rem;
+                width: auto;
+                background: var(--primary);
+                color: white;
+                border: none;
+                padding: 8px 22px;
+                border-radius: 50px;
+                font-weight: 600;
+                cursor: pointer;
+                font-size: 0.82rem;
                 transition: filter 0.2s;
+                flex-shrink: 0;
+                white-space: nowrap;
+                line-height: 1.3;
+                letter-spacing: 0;
+                box-shadow: none;
             }
-            .search-box button:hover { filter: brightness(1.12); }
+            .search-box button:hover {
+                filter: brightness(1.12);
+                transform: none;     /* cancel global button:hover lift */
+                box-shadow: none;    /* cancel global button:hover shadow */
+            }
             .search-clear {
                 text-decoration: none; color: #999; font-size: 0.8rem;
                 padding: 7px 12px; border-radius: 50px;
                 transition: color 0.2s, background 0.2s;
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
             }
             .search-clear:hover { color: #ef476f; background: rgba(239,71,111,0.07); }
+
+            /* Let the search form take available space so the search-box can grow up to its max-width */
+            .customers-toolbar > form { flex: 1 1 320px; min-width: 0; max-width: 480px; }
+
+            @media (max-width: 600px) {
+                .search-box { min-width: 0; max-width: 100%; }
+                .customers-toolbar > form { flex: 1 1 100%; max-width: 100%; }
+            }
 
             .export-btn {
                 background: linear-gradient(135deg, #20bf6b 0%, #0fb9b1 100%);
