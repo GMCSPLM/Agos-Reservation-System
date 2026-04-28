@@ -148,18 +148,26 @@
 <!-- Outside nav so position:fixed works correctly -->
 <div class="nav-overlay" id="navOverlay"></div>
 <ul class="mobile-nav" id="mobileNav">
-    <li style="display:flex; justify-content:flex-end; padding: 0 4px 8px;" class="mobile-close-btn">
-        <button onclick="closeMenu()" style="
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #023e8a;
-            line-height: 1;
-            padding: 4px 8px;
-            border-radius: 8px;
-        " aria-label="Close menu">&#10005;</button>
-    </li>
+    <li style="position:absolute; top:18px; right:18px;">
+    <button onclick="closeMenu()" id="mobileCloseBtn" aria-label="Close menu" style="
+        background: none;
+        border: 2px solid rgba(2,62,138,0.15);
+        font-size: 1.2rem;
+        cursor: pointer;
+        color: #023e8a;
+        line-height: 1;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, color 0.2s, border-color 0.2s;
+    "
+    onmouseover="this.style.background='#023e8a';this.style.color='white';this.style.borderColor='#023e8a';"
+    onmouseout="this.style.background='none';this.style.color='#023e8a';this.style.borderColor='rgba(2,62,138,0.15)';"
+    >&#10005;</button>
+</li>
     <li><a href="index.php">HOME</a></li>
     <li><a href="branches.php">BRANCHES</a></li>
     <li><a href="amenities.php">AMENITIES</a></li>
