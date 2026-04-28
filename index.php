@@ -815,11 +815,18 @@ if ($nextMonth > 12) {
     .calendar-container  { padding: 0.8rem 0.4rem; }
     .calendar-grid       { gap: 3px; margin-top: 8px; }
     .calendar-day-header { padding: 7px 1px; font-size: 0.52rem; border-radius: 4px; }
-    .calendar-day        { min-height: 58px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
+    .calendar-day        { min-height: 72px; padding: 4px 2px; border-radius: 6px; border-width: 1px; }
     .day-number          { font-size: 0.72rem; margin-bottom: 1px; font-weight: 700; }
     .day-status          { font-size: 0.38rem; padding: 1px 2px; border-radius: 3px; }
-    .day-today .day-status  { display: none; }
-    .day-today .slot-pills  { display: none; }
+    .day-today .day-status { 
+    font-size: 0.32rem; 
+    padding: 1px 2px; 
+    line-height: 1.2;
+    word-break: break-word;
+    white-space: normal;
+    text-align: center;
+    max-width: 100%;
+    }
     .day-today::after    { font-size: 0.42rem; padding: 1px 4px; top: 2px; right: 3px; }
     .slot-pills          { gap: 1px; margin-top: 1px; }
     .slot-pill           { font-size: 0.38rem; padding: 1px 2px; border-radius: 4px; }
