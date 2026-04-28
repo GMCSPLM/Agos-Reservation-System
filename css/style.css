@@ -1,579 +1,292 @@
-/* ============================================================
-   CheckMates — RESPONSIVE FIX (responsive-fix.css)
-   Add this AFTER css/style.css in every page's <head>.
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
-   Usage in header.php (inside <head>, after style.css link):
-   <link rel="stylesheet" href="css/responsive-fix.css">
-   ============================================================ */
-
-/* ── 0. BASE RESETS ──────────────────────────────────────────
-   Prevent ALL horizontal overflow site-wide.                  */
-html, body {
-    overflow-x: hidden;
-    -webkit-text-size-adjust: 100%; /* stop iOS from zooming text */
-    text-size-adjust: 100%;
+:root {
+    --primary: #0077b6;
+    --primary-dark: #023e8a;
+    --secondary: #48cae4;
+    --accent: #caf0f8;
+    --text-dark: #1d3557;
+    --text-light: #f1faee;
+    --glass: rgba(255, 255, 255, 0.92);
+    --glass-hover: rgba(255, 255, 255, 1);
+    --shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
 }
 
-/* Make every element respect its container by default */
-*,
-*::before,
-*::after {
-    box-sizing: border-box;
-    max-width: 100%;
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; scroll-behavior: smooth; }
+
+body {
+    background: linear-gradient(rgba(0, 119, 182, 0.1), rgba(0, 119, 182, 0.1)), 
+                url('../Hacienda-Backyard.png');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: var(--text-dark);
+    line-height: 1.6;
+    min-height: 100vh;
 }
 
-/* Images & media never burst out of their containers */
-img, video, iframe, embed, object {
-    max-width: 100%;
-    height: auto;
-    display: block;
-}
-
-/* Prevent long words / URLs from causing horizontal scroll */
-p, h1, h2, h3, h4, h5, h6, li, td, th, label, span, a {
-    overflow-wrap: break-word;
-    word-wrap: break-word;
-}
-
-/* ── 1. NAV / HEADER ─────────────────────────────────────────
-   Ensure nav never wraps or overflows on any screen.          */
 nav {
-    position: sticky;
-    top: 0;
-    z-index: 1000;
-    padding: 1rem 5%;
+    background: rgba(255, 255, 255, 0.85);
+    padding: 1.2rem 5%;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    flex-wrap: nowrap;
-    min-height: 60px;
-    background: rgba(255, 255, 255, 0.9);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 4px 30px rgba(0,0,0,0.1);
-    border-bottom: 1px solid rgba(255,255,255,0.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-nav ul {
-    display: flex;
-    list-style: none;
-    gap: 1.5rem;
-    align-items: center;
-    flex-wrap: nowrap;
-    margin: 0;
-    padding: 0;
+.logo { font-size: 1.6rem; font-weight: 700; color: var(--primary-dark); display: flex; align-items: center; gap: 8px; }
+.logo span { color: var(--secondary); font-size: 1rem; font-weight: 500; letter-spacing: 1px; }
+
+nav ul { display: flex; list-style: none; gap: 2rem; align-items: center; }
+nav a { text-decoration: none; color: var(--text-dark); font-weight: 500; transition: 0.3s; font-size: 0.95rem; }
+nav a:hover { color: var(--primary); transform: translateY(-2px); }
+
+.btn-nav { 
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark)); 
+    color: white !important; 
+    padding: 0.7rem 1.8rem; 
+    border-radius: 50px; 
+    box-shadow: 0 4px 15px rgba(2, 62, 138, 0.3); 
+}
+.btn-nav:hover { 
+    transform: translateY(-2px); 
+    box-shadow: 0 6px 20px rgba(2, 62, 138, 0.5); 
+    filter: brightness(1.1);
 }
 
-/* ── 2. GLOBAL CONTAINER ─────────────────────────────────────
-   Never allow .container to be wider than the viewport.       */
-.container {
-    width: 100%;
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-    padding-left: 20px;
-    padding-right: 20px;
-}
-
-/* ── 3. HERO ─────────────────────────────────────────────────*/
 .hero {
-    width: 100%;
-    overflow: hidden;
-}
-
-/* ── 4. CARDS / GRID ─────────────────────────────────────────*/
-.grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
-    gap: 2rem;
-}
-
-.card {
-    width: 100%;
-    min-width: 0; /* allow card to shrink below default min-content */
-}
-
-.card img {
-    width: 100%;
-    height: 220px;
-    object-fit: cover;
-}
-
-/* ── 5. TABLES ───────────────────────────────────────────────
-   Scrollable horizontally instead of breaking layout.         */
-.table-responsive {
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-}
-
-table {
-    min-width: 500px; /* don't let it collapse below readable width */
-    width: 100%;
-}
-
-/* ── 6. FORMS / INPUTS ───────────────────────────────────────*/
-input,
-select,
-textarea,
-button {
-    max-width: 100%;
-}
-
-.form-group {
-    width: 100%;
-}
-
-/* Auth box should never overflow on small screens */
-.auth-box {
-    max-width: min(450px, calc(100% - 32px));
-    margin-left: auto;
-    margin-right: auto;
-}
-
-/* ── 7. FEEDBACK SECTION ─────────────────────────────────────*/
-.feedback-section-wrapper {
-    width: 100%;
-    overflow: hidden;
-}
-
-.feedback-grid {
-    width: 100%;
-}
-
-.feedback-card {
-    min-width: 0;
-    width: 100%;
-}
-
-/* ── 8. BOOK PAGE — split layout ─────────────────────────────*/
-.book-page-wrapper {
-    width: 100%;
-    overflow-x: hidden;
-}
-
-.book-form-card {
-    max-width: min(490px, 100%);
-}
-
-/* ── 9. DASHBOARD SIDEBAR ────────────────────────────────────
-   Make sure the sidebar never causes horizontal overflow.     */
-.sidebar {
-    flex-shrink: 0;
-}
-
-.main-content {
-    min-width: 0; /* flex child must be able to shrink */
-    flex: 1;
-    overflow-x: hidden;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   TABLET  ≤ 960px
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width: 960px) {
-
-    /* Nav: compress gaps */
-    nav ul { gap: 1rem; }
-    nav a  { font-size: 0.85rem; }
-
-    .grid {
-        grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-        gap: 1.5rem;
-    }
-
-    .container { padding-left: 16px; padding-right: 16px; }
-
-    /* Calendar */
-    .calendar-controls {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    .branch-selector {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    .branch-select { width: 100%; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   MOBILE  ≤ 768px
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width: 768px) {
-
-    /* ── Body ── */
-    body { background-attachment: scroll; }
-
-    /* ── Nav ── */
-    nav { padding: 0.85rem 4%; }
-    nav ul { display: none !important; } /* mobile-nav handles this */
-    .logo { font-size: 1.25rem; }
-    .logo span { font-size: 0.82rem; }
-    .hamburger { display: flex !important; }
-
-    /* ── Hero ── */
-    .hero {
-        height: auto;
-        min-height: 60vh;
-        padding: 60px 20px;
-        background-attachment: scroll;
-    }
-    .hero h1 { font-size: clamp(1.5rem, 6vw, 2.4rem); }
-    .hero p  { font-size: clamp(0.9rem, 3vw, 1.1rem); margin-bottom: 1.5rem; }
-    .btn-hero { padding: 0.8rem 1.8rem; font-size: 0.9rem; }
-
-    /* ── Section title ── */
-    .section-title {
-        font-size: clamp(1.3rem, 5vw, 1.8rem);
-        padding: 8px 18px;
-        margin: 2rem 0 1.5rem;
-    }
-
-    /* ── Container ── */
-    .container { padding: 0 14px 36px; }
-
-    /* ── Grid ── */
-    .grid { grid-template-columns: 1fr; gap: 1.2rem; }
-
-    /* ── Cards ── */
-    .card img { height: 190px; }
-    .card-content { padding: 1.2rem; }
-    .card h3 { font-size: 1.15rem; }
-
-    /* ── Auth box ── */
-    .auth-box {
-        margin: 1.5rem 0;
-        padding: 1.8rem 1.2rem;
-        border-radius: 16px;
-        max-width: 100%;
-    }
-
-    /* ── Tables ── */
-    table {
-        display: block;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        white-space: nowrap;
-        font-size: 0.82rem;
-        border-radius: 12px;
-    }
-    th, td { padding: 11px 13px; }
-
-    /* ── Feedback section ── */
-    .feedback-section-wrapper {
-        padding: 36px 0;
-        background-attachment: scroll;
-    }
-    .feedback-header {
-        flex-direction: column;
-        gap: 10px;
-        margin-bottom: 20px;
-    }
-    .header-split {
-        width: 100%;
-    }
-    .header-split h3 {
-        font-size: 1.2rem;
-        white-space: normal;
-    }
-    .custom-form-grid {
-        grid-template-columns: 1fr !important;
-        gap: 16px;
-    }
-    .feedback-grid {
-        display: flex !important;
-        flex-direction: column;
-        overflow-x: visible;
-        gap: 16px;
-        padding: 0;
-    }
-    .feedback-card {
-        min-width: unset !important;
-        width: 100%;
-    }
-
-    /* ── Book page ── */
-    .book-page-wrapper { flex-direction: column; }
-    .book-hero-panel   { min-height: 280px; max-height: 360px; }
-    .book-form-panel   { padding: 24px 16px 40px; min-height: auto; }
-    .book-form-card    {
-        padding: 26px 18px;
-        border-radius: 18px;
-        max-width: 100%;
-        width: 100%;
-    }
-    .gallery-overlay   { left: 20px; right: 20px; bottom: 20px; }
-    .gallery-dots      { right: 20px; bottom: 10px; }
-
-    /* ── Dashboard ── */
-    .mob-topbar { display: flex !important; }
-    .sidebar {
-        position: fixed !important;
-        top: 0; left: 0;
-        height: 100vh;
-        z-index: 1300;
-        width: 260px !important;
-        transform: translateX(-100%);
-        transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
-        padding-top: 64px;
-        overflow-y: auto;
-    }
-    .sidebar.open {
-        transform: translateX(0);
-        box-shadow: 6px 0 30px rgba(0,0,0,0.2);
-    }
-    body { display: block !important; }
-    body.has-mobile-nav { padding-top: 56px; }
-    .main-content {
-        margin-left: 0 !important;
-        padding: 1.2rem 1rem;
-        width: 100%;
-    }
-    .glass-panel {
-        padding: 1.2rem 1rem;
-        border-radius: 14px;
-    }
-    .charts-grid { grid-template-columns: 1fr !important; }
-    .stats-grid  { grid-template-columns: repeat(2, 1fr) !important; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   SMALL PHONES  ≤ 480px
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width: 480px) {
-
-    /* ── Nav ── */
-    nav { padding: 0.75rem 4%; }
-
-    /* ── Hero ── */
-    .hero { padding: 50px 14px; min-height: 55vh; }
-    .hero h1  { font-size: clamp(1.3rem, 7vw, 1.8rem); }
-    .hero p   { font-size: 0.88rem; }
-    .btn-hero { padding: 0.7rem 1.4rem; font-size: 0.85rem; }
-
-    /* ── Section title ── */
-    .section-title {
-        font-size: clamp(1.1rem, 5.5vw, 1.4rem);
-        padding: 7px 14px;
-        margin: 1.5rem 0 1.2rem;
-    }
-
-    /* ── Container ── */
-    .container { padding: 0 12px 28px; }
-
-    /* ── Cards ── */
-    .card img { height: 170px; }
-    .card-content { padding: 1rem; }
-
-    /* ── Auth ── */
-    .auth-box {
-        margin: 1rem 0;
-        padding: 1.5rem 1rem;
-        border-radius: 14px;
-    }
-    .auth-box h2 { font-size: 1.25rem; }
-
-    /* ── Tables ── */
-    th, td { padding: 9px 10px; font-size: 0.78rem; }
-
-    /* ── Feedback ── */
-    .feedback-section-wrapper { padding: 24px 0; }
-    .header-split h3 { font-size: 1rem; }
-    .feedback-card { padding: 16px 14px; }
-    .star-rating label { font-size: 1.8rem !important; }
-    .custom-textarea { min-height: 110px; }
-    .btn-submit-custom {
-        width: 100%;
-        font-size: 0.9rem;
-        padding: 10px 16px;
-    }
-
-    /* ── Calendar ── */
-    .calendar-controls { padding: 12px 8px; gap: 8px; }
-    .current-month { font-size: 0.9rem; min-width: unset; }
-    .nav-btn { padding: 6px 10px; font-size: 0.76rem; }
-    .calendar-container { padding: 0.8rem 0.4rem; }
-    .calendar-grid { gap: 3px; margin-top: 8px; }
-    .calendar-day-header {
-        padding: 6px 1px;
-        font-size: 0.5rem;
-        border-radius: 4px;
-    }
-    .calendar-day {
-        min-height: 52px;
-        padding: 4px 2px;
-        border-radius: 6px;
-    }
-    .day-number { font-size: 0.76rem; font-weight: 700; }
-    .day-status { font-size: 0.4rem; padding: 1px 2px; }
-    .slot-pills { gap: 1px; margin-top: 1px; }
-    .slot-pill  { font-size: 0.36rem; padding: 1px 2px; }
-    .calendar-legend { gap: 8px; padding: 8px; flex-wrap: wrap; justify-content: center; }
-    .legend-item { font-size: 0.68rem; }
-    .legend-box  { width: 11px; height: 11px; }
-
-    /* ── Book page ── */
-    .book-hero-panel { min-height: 240px; }
-    .book-form-card  { padding: 20px 14px; border-radius: 16px; }
-    .book-form-heading { font-size: 1.25rem; }
-    .bk-input { padding: 11px 12px; font-size: 0.88rem; }
-    .tour-type-grid { grid-template-columns: 1fr !important; gap: 10px; }
-    .book-step-label { display: none; }
-    .book-submit-btn { width: 100%; font-size: 0.9rem; }
-
-    /* ── Dashboard ── */
-    .main-content { padding: 0.9rem 0.7rem; }
-    .glass-panel  { padding: 1rem 0.8rem; }
-    h1.page-title { font-size: 1.3rem !important; }
-    .stats-grid   { grid-template-columns: repeat(2, 1fr) !important; gap: 0.8rem; }
-    .stat-card    { padding: 1rem; }
-    .stat-card .stat-value { font-size: 1.6rem; }
-    table  { font-size: 0.78rem; }
-    th, td { padding: 8px 9px; }
-    .action-buttons { flex-wrap: wrap; gap: 5px; }
-    .btn-action { font-size: 0.74rem; padding: 5px 10px; }
-    .filter-btn { font-size: 0.74rem; padding: 5px 10px; }
-    .customers-toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
-    .feedback-grid { grid-template-columns: 1fr !important; }
-    .pagination { flex-wrap: wrap; justify-content: center; gap: 3px; }
-    .modal-actions { flex-direction: column-reverse; gap: 8px; }
-    .btn-cancel, .btn-submit { width: 100%; text-align: center; }
-    .branch-admin-grid { grid-template-columns: 1fr !important; }
-    .maint-toggle-card { flex-direction: column; align-items: flex-start; gap: 0.8rem; }
-    .chart-container { height: 200px !important; }
-    .chart-card-header { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   EXTRA SMALL  ≤ 375px
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width: 375px) {
-
-    nav { padding: 0.7rem 3.5%; }
-    .logo { font-size: 1.1rem; }
-    .logo span { font-size: 0.75rem; }
-
-    .hero { padding: 40px 12px; min-height: 50vh; }
-    .hero h1 { font-size: clamp(1.15rem, 8vw, 1.55rem); }
-    .hero p  { font-size: 0.84rem; }
-    .btn-hero { padding: 0.65rem 1.2rem; font-size: 0.82rem; }
-
-    .section-title { font-size: 1.15rem; padding: 6px 12px; margin: 1.2rem 0 1rem; }
-    .container { padding: 0 10px 22px; }
-
-    .card img { height: 155px; }
-    .card-content { padding: 0.9rem; }
-    .card h3 { font-size: 1rem; }
-
-    .auth-box { padding: 1.2rem 0.9rem; }
-    .auth-box h2 { font-size: 1.1rem; }
-    input, select, textarea { padding: 0.8rem; font-size: 0.88rem; }
-
-    .header-split h3 { font-size: 0.9rem; margin: 0 6px; }
-    .custom-input { padding: 10px; font-size: 0.85rem; }
-    .custom-textarea { min-height: 90px; font-size: 0.85rem; padding: 10px; }
-    .star-rating label { font-size: 1.5rem !important; }
-    .feedback-card { padding: 14px 12px; }
-
-    .book-hero-panel { min-height: 200px; }
-    .book-form-card  { padding: 18px 12px; }
-    .book-form-heading { font-size: 1.1rem; }
-    .book-steps { margin-bottom: 18px; }
-    .book-step-num { width: 26px; height: 26px; font-size: 0.7rem; }
-
-    .stats-grid  { grid-template-columns: 1fr !important; }
-    .stat-card   { padding: 0.8rem; }
-    .stat-card .stat-value { font-size: 1.4rem; }
-    .glass-panel { padding: 0.8rem 0.65rem; }
-    h1.page-title { font-size: 1.1rem !important; }
-    table { font-size: 0.72rem; }
-    th, td { padding: 7px 8px; }
-    .btn-action { font-size: 0.68rem; padding: 4px 8px; }
-    .filter-btn { font-size: 0.68rem; padding: 4px 8px; }
-
-    .calendar-day { min-height: 44px; }
-    .calendar-day-header { font-size: 0.45rem; }
-    .day-number { font-size: 0.68rem; }
-    .slot-pill  { font-size: 0.32rem; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   ABSOLUTE MINIMUM  ≤ 320px
-   ═══════════════════════════════════════════════════════════ */
-@media (max-width: 320px) {
-
-    nav { padding: 0.65rem 3%; }
-    .logo { font-size: 1rem; }
-    .logo span { display: none; } /* hide tagline on tiny screens */
-
-    .hero h1 { font-size: 1.1rem; }
-    .hero p  { font-size: 0.8rem; }
-    .btn-hero { padding: 0.6rem 1rem; font-size: 0.78rem; }
-
-    .section-title { font-size: 1rem; padding: 5px 10px; }
-    .container { padding: 0 8px 18px; }
-
-    .card img { height: 140px; }
-    .card-content { padding: 0.75rem; }
-
-    .auth-box { padding: 1rem 0.75rem; }
-    input, select, textarea { padding: 0.7rem; font-size: 0.84rem; }
-
-    .book-form-heading { font-size: 1rem; }
-    .book-form-card { padding: 16px 10px; }
-    .bk-input { padding: 9px 10px; font-size: 0.82rem; }
-    .tt-price { font-size: 0.9rem; }
-
-    table { font-size: 0.68rem; }
-    th, td { padding: 6px 7px; }
-
-    .header-split h3 { font-size: 0.82rem; }
-    .star-rating label { font-size: 1.3rem !important; }
-    .custom-input { padding: 9px; font-size: 0.8rem; }
-    .custom-textarea { padding: 9px; font-size: 0.8rem; }
-
-    .calendar-day { min-height: 38px; }
-    .calendar-day-header { font-size: 0.4rem; padding: 4px 1px; }
-    .day-number { font-size: 0.62rem; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   UTILITY — force safe max-widths on wide inline elements
-   ═══════════════════════════════════════════════════════════ */
-[style*="max-width: 1100px"],
-[style*="max-width:1100px"],
-[style*="max-width: 1000px"],
-[style*="max-width:1000px"] {
-    max-width: min(1100px, 100%) !important;
-}
-
-/* Maintenance banner: don't let it overflow */
-div[style*="linear-gradient(135deg,#fff3cd"] {
-    max-width: 100%;
-    overflow: hidden;
-}
-
-/* Toast: keep it inside the viewport on small screens */
-#booking-toast {
-    max-width: calc(100vw - 32px);
-    padding: 14px 20px;
-    font-size: 0.95rem;
+    height: 85vh;
+    background: linear-gradient(rgba(29, 53, 87, 0.4), rgba(29, 53, 87, 0.4)), 
+                url('../Hacienda-Preview.png');
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
-    white-space: normal;
-}
-#toast-container {
-    right: 12px;
-    top: 12px;
-    left: 12px;
-    align-items: flex-end;
-}
-.toast {
-    min-width: unset;
-    width: 100%;
-    font-size: 0.88rem;
+    color: white;
+    padding: 0 20px;
+    margin-bottom: 2rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
 }
 
-@media (min-width: 600px) {
-    #toast-container { left: auto; width: 340px; }
-    .toast { width: auto; min-width: 280px; }
+.hero-content { animation: fadeInUp 1s ease-out; }
+.hero h1 { font-size: 3.8rem; margin-bottom: 1rem; font-weight: 700; text-shadow: 2px 2px 10px rgba(0,0,0,0.5); }
+.hero p { font-size: 1.3rem; margin-bottom: 2.5rem; max-width: 700px; margin-left: auto; margin-right: auto; text-shadow: 1px 1px 5px rgba(0,0,0,0.5); }
+
+.btn-hero { 
+    background: white; 
+    color: var(--primary-dark); 
+    padding: 1rem 2.8rem; 
+    text-decoration: none; 
+    border-radius: 50px; 
+    font-weight: 700; 
+    transition: 0.3s; 
+    display: inline-block;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+}
+.btn-hero:hover { background: var(--secondary); color: white; transform: scale(1.05); }
+
+.section-title { 
+    color: var(--primary-dark); 
+    text-shadow: none; 
+    background: rgba(255,255,255,0.8); 
+    display: inline-block; 
+    padding: 10px 30px; 
+    border-radius: 50px; 
+    backdrop-filter: blur(5px);
+    text-align: center; 
+    font-size: 2.8rem; 
+    margin: 4rem 0 2.5rem 0; 
+    font-weight: 700; 
+}
+
+.container { max-width: 1200px; margin: 0 auto; padding: 0 20px 50px 20px; text-align: center; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2.5rem; text-align: left; }
+
+.card { 
+    background: var(--glass); 
+    border-radius: 20px; 
+    overflow: hidden; 
+    box-shadow: var(--shadow); 
+    transition: 0.4s; 
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(8px);
+}
+.card:hover { 
+    transform: translateY(-10px); 
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2); 
+    background: var(--glass-hover);
+}
+.card img { width: 100%; height: 220px; object-fit: cover; transition: 0.5s; }
+.card:hover img { transform: scale(1.05); }
+.card-content { padding: 1.8rem; }
+.card h3 { color: var(--primary-dark); margin-bottom: 0.5rem; font-size: 1.4rem; }
+.price { color: var(--primary); font-weight: 700; font-size: 1.1rem; display: block; margin: 10px 0; }
+
+.auth-box { 
+    max-width: 450px; 
+    margin: 5rem auto; 
+    background: rgba(255, 255, 255, 0.95); 
+    padding: 3rem; 
+    border-radius: 20px; 
+    box-shadow: 0 15px 35px rgba(0,0,0,0.2); 
+    animation: fadeIn 0.8s; 
+    text-align: left;
+    backdrop-filter: blur(10px);
+}
+.auth-box h2 { text-align: center; color: var(--primary-dark); margin-bottom: 2rem; }
+.form-group { margin-bottom: 1.5rem; }
+.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-dark); }
+input, select, textarea { 
+    width: 100%; 
+    padding: 1rem; 
+    border: 1px solid #cce3de; 
+    border-radius: 10px; 
+    background: #fdfdfd; 
+    outline: none; 
+    transition: 0.3s; 
+    font-size: 0.95rem;
+}
+input:focus, select:focus, textarea:focus { 
+    border-color: var(--primary); 
+    box-shadow: 0 0 0 4px rgba(0, 119, 182, 0.1); 
+}
+button { 
+    width: 100%; 
+    background: linear-gradient(to right, var(--primary-dark), var(--primary)); 
+    color: white; 
+    border: none; 
+    padding: 1rem; 
+    border-radius: 10px; 
+    font-weight: 600; 
+    cursor: pointer; 
+    transition: 0.3s; 
+    font-size: 1rem;
+    letter-spacing: 0.5px;
+}
+button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(2, 62, 138, 0.4); }
+
+.feedback-grid { 
+    display: flex; 
+    overflow-x: auto; 
+    gap: 25px; 
+    padding: 20px 10px; 
+    scrollbar-width: none; 
+}
+.feedback-card { 
+    min-width: 320px; 
+    background: var(--glass); 
+    padding: 25px; 
+    border-radius: 15px; 
+    box-shadow: var(--shadow); 
+    border-left: 5px solid var(--secondary); 
+    backdrop-filter: blur(5px);
+}
+.rating { color: #ffb703; margin: 10px 0; font-size: 0.9rem; }
+
+.container > div[style*="background: white"] {
+    background: var(--glass) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.5);
+}
+
+table { 
+    width: 100%; 
+    border-collapse: separate; 
+    border-spacing: 0; 
+    background: white; 
+    border-radius: 15px; 
+    overflow: hidden; 
+    box-shadow: var(--shadow); 
+}
+/* Password Visibility Toggle */
+.pw-wrapper {
+    position: relative;
+    display: block;
+    width: 100%;
+}
+
+.pw-wrapper input {
+    width: 100%;
+    padding-right: 44px !important; /* Prevents text from typing underneath the icon */
+    box-sizing: border-box;
+}
+
+.pw-toggle {
+    position: absolute;
+    top: 50%;
+    right: 14px;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    font-size: 1.1rem;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.2s;
+    z-index: 2;
+    
+    /* THE FIX: Overrides the global button { width: 100%; } */
+    width: auto; 
+    height: auto;
+}
+
+.pw-toggle:hover { 
+    color: var(--primary); 
+    box-shadow: none; /* Prevents inheriting the global button hover shadow */
+    background: transparent;
+}
+th { background: var(--primary-dark); color: white; padding: 18px; text-align: left; font-weight: 600; }
+td { padding: 18px; border-bottom: 1px solid #f0f0f0; color: var(--text-dark); }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f8fbfd; }
+
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+/* ════════════════════════════════════════════════════
+   ADDED: Responsive — originals above are untouched
+   ════════════════════════════════════════════════════ */
+body { overflow-x: hidden; }
+
+@media (max-width: 768px) {
+    body           { background-attachment: scroll; }
+    nav            { padding: 1rem 5%; }
+    .hero          { height: 70vh; padding: 0 16px; background-attachment: scroll; }
+    .hero h1       { font-size: 2.2rem; }
+    .hero p        { font-size: 1rem; margin-bottom: 1.8rem; }
+    .btn-hero      { padding: 0.85rem 2rem; font-size: 0.95rem; }
+    .section-title { font-size: 1.7rem; padding: 8px 20px; margin: 2.5rem 0 1.5rem 0; }
+    .container     { padding: 0 16px 40px 16px; }
+    .grid          { grid-template-columns: 1fr; gap: 1.5rem; }
+    .card img      { height: 190px; }
+    .auth-box      { margin: 2rem 16px; padding: 2rem 1.5rem; }
+    table          { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; font-size: 0.82rem; }
+    th, td         { padding: 12px 14px; }
+    .feedback-grid { flex-direction: column; overflow-x: visible; }
+    .feedback-card { min-width: unset; width: 100%; padding: 20px; }
+}
+
+@media (max-width: 480px) {
+    .hero h1       { font-size: 1.8rem; }
+    .hero p        { font-size: 0.9rem; }
+    .section-title { font-size: 1.45rem; }
+    .logo          { font-size: 1.3rem; }
+    .auth-box      { margin: 1.5rem 12px; padding: 1.8rem 1.2rem; }
+    .btn-hero      { padding: 0.75rem 1.6rem; font-size: 0.9rem; }
+    .card-content  { padding: 1.2rem; }
+}
+
+@media (max-width: 360px) {
+    .hero h1       { font-size: 1.55rem; }
+    .hero p        { font-size: 0.85rem; }
+    .section-title { font-size: 1.3rem; padding: 6px 16px; }
+    .auth-box      { margin: 1rem 10px; padding: 1.5rem 1rem; }
 }
