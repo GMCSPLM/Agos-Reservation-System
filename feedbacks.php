@@ -527,6 +527,20 @@ $isLoggedIn   = isset($_SESSION['customer_id']);
     .feedback-card-name        { font-size: 0.92rem; }
     .feedback-card-comment     { font-size: 0.82rem; }
 }
+
+/* ── ADDED: 280px–320px absolute minimum ── */
+@media (max-width: 320px) {
+    .feedback-section-wrapper  { padding: 20px 0; }
+    .header-split h3           { font-size: 0.88rem; margin: 0 6px; }
+    .custom-input              { padding: 9px; font-size: 0.82rem; }
+    .custom-textarea           { min-height: 80px; font-size: 0.82rem; padding: 9px; }
+    .star-rating label         { font-size: 1.4rem; }
+    .btn-submit-custom         { font-size: 0.84rem; padding: 8px 12px; }
+    .word-count-bar            { padding: 2px 6px; }
+    .feedback-card             { padding: 14px 10px 12px; }
+    .feedback-card-name        { font-size: 0.85rem; }
+    .feedback-card-comment     { font-size: 0.78rem; }
+}
 </style>
 
 <!-- Toast Container -->
