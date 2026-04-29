@@ -255,7 +255,7 @@ tr:hover td { background: #f8fbfd; }
    ════════════════════════════════════════════════════ */
 
 /* Prevent horizontal scroll on all screen sizes */
-html, body { overflow-x: hidden; }
+html, body { overflow-x: clip; }
 
 /* ── Tablet & small desktop  ≤ 1024px ───────────────────── */
 @media (max-width: 1024px) {
@@ -346,3 +346,22 @@ html, body { overflow-x: hidden; }
     .card-content  { padding: 1rem; }
     th, td         { padding: 7px 8px; font-size: 0.72rem; }
 }
+
+/* ── Tablet nav fix (769px – 1024px) ─────────────────── */
+@media (min-width: 769px) and (max-width: 1024px) {
+    nav ul      { gap: 1rem; }
+    nav a       { font-size: 0.82rem; }
+    nav         { padding: 1rem 3%; }
+    .logo       { font-size: 1.3rem; }
+    .logo span  { display: none; }        /* hides "AGOS" tagline to save space */
+    .btn-nav    { padding: 0.6rem 1.2rem; }
+    .btn-nav-reservations { padding: 6px 12px !important; }
+}
+
+/* ── Prevent nav overflow safety net ─────────────────── */
+nav ul {
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+nav { min-width: 0; }
+.logo { flex-shrink: 0; white-space: nowrap; }
