@@ -251,20 +251,52 @@ if ($nextMonth > 12) {
     box-shadow: 0 4px 15px rgba(0,0,0,0.1);
 }
 
-.star-rating {
+/* ── Rating + submit column wrapper (replaces inline styles) ── */
+.rating-submit-col {
     display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+    width: 100%;
+}
+
+/* Small label above the stars for clarity and visual balance */
+.rating-label {
+    display: block;
+    text-align: center;
+    color: #023e8a;
+    font-weight: 600;
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.95rem;
+    text-shadow: 0 1px 2px rgba(255,255,255,0.7);
+    margin: 0;
+}
+
+.star-rating {
+    display: inline-flex;            /* shrink-to-fit so stars stay centered */
     flex-direction: row-reverse;
     justify-content: center;
-    gap: 10px;
-    margin-bottom: 20px;
+    align-items: center;
+    flex-wrap: wrap-reverse;          /* preserve hover order if it ever wraps */
+    gap: 6px;
+    margin: 0 0 4px;
+    padding: 4px 6px;
+    max-width: 100%;
 }
 .star-rating input { display: none; }
 .star-rating label {
-    font-size: 3rem;
-    color: rgba(255, 255, 255, 0.8);
+    font-size: 2.6rem;                /* slightly tighter default to fit narrow columns */
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.85);
     text-shadow: 0 2px 4px rgba(0,0,0,0.2);
     cursor: pointer;
-    transition: color 0.2s;
+    transition: color 0.2s, transform 0.15s;
+    user-select: none;
+}
+.star-rating label:hover {
+    transform: scale(1.08);
 }
 .star-rating input:checked ~ label,
 .star-rating label:hover,
@@ -831,7 +863,10 @@ if ($nextMonth > 12) {
     .header-split        { width: 100%; }
     .header-split h3     { font-size: 1.1rem; white-space: normal; }
     .custom-form-grid    { grid-template-columns: 1fr; gap: 14px; }
-    .star-rating label   { font-size: 1.9rem; }
+    .rating-submit-col   { gap: 10px; }
+    .star-rating         { gap: 4px; padding: 2px 4px; }
+    .star-rating label   { font-size: 2rem; }
+    .rating-label        { font-size: 0.88rem; }
     .custom-textarea     { min-height: 110px; }
     .btn-submit-custom   { font-size: 0.92rem; }
     .container > div[style*="max-width:1100px"] { /* maintenance banner */
@@ -861,7 +896,9 @@ if ($nextMonth > 12) {
     .header-split h3     { font-size: 0.95rem; }
     .custom-input        { padding: 10px; font-size: 0.85rem; }
     .custom-textarea     { min-height: 90px; font-size: 0.85rem; padding: 10px; }
-    .star-rating label   { font-size: 1.55rem; }
+    .star-rating         { gap: 2px; }
+    .star-rating label   { font-size: 1.7rem; }
+    .rating-label        { font-size: 0.82rem; }
     .btn-submit-custom   { font-size: 0.86rem; padding: 9px 14px; }
 }
 </style>
@@ -1244,6 +1281,18 @@ if ($nextMonth > 12) {
         grid-template-columns: 1fr 1fr;
         gap: 16px;
     }
+    /* Make rating + submit span the full width on tablet so the stars
+       are centered across the row instead of stuck in one half-column. */
+    .rating-submit-col {
+        grid-column: 1 / -1;
+        margin-top: 6px;
+    }
+    .rating-submit-col .btn-submit-custom {
+        max-width: 320px;     /* keep submit a sensible width when the col spans 2 */
+        width: 100%;
+        margin: 0 auto;
+    }
+    .star-rating label        { font-size: 2.4rem; }
     .feedback-section-wrapper { padding: 40px 0; background-attachment: scroll; }
     .feedback-header          { flex-direction: column; gap: 10px; }
     .header-split             { width: 100%; }
@@ -1517,7 +1566,8 @@ if ($nextMonth > 12) {
                     <span class="helper-text">How would you describe your stay with us?</span>
                 </div>
 
-                <div style="text-align: center; display: flex; flex-direction: column; justify-content: center;">
+                <div class="rating-submit-col">
+                    <span class="rating-label">Your Rating</span>
                     <div class="star-rating">
                         <input type="radio" id="star5" name="rating" value="5" checked><label for="star5" title="5 stars">★</label>
                         <input type="radio" id="star4" name="rating" value="4"><label for="star4" title="4 stars">★</label>
