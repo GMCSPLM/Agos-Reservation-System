@@ -1218,7 +1218,7 @@ if ($initialSliderBranchId !== null) {
                         <span class="book-price-label">Total Amount</span>
                         <span class="book-price-note">Inclusive of all fees</span>
                     </div>
-                    <div class="book-price-amount" id="priceDisplay">₱900</div>
+                    <div class="book-price-amount" id="priceDisplay">₱9,000</div>
                 </div>
                 <?php endif; ?>
 
@@ -1239,7 +1239,7 @@ if ($initialSliderBranchId !== null) {
 
 <script>
 // Live price update
-const priceMap     = { Day: '₱900', Overnight: '₱1,000' };
+const priceMap     = { Day: '₱9,000', Overnight: '₱10,000' };
 const priceDisplay = document.getElementById('priceDisplay');
 
 document.querySelectorAll('input[name="type"]').forEach(radio => {
