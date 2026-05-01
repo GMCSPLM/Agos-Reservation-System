@@ -690,10 +690,8 @@
             $action_err = "Password and Confirm Password are required when creating a customer.";
         } elseif ($c_pwd !== $c_pwd_conf) {
             $action_err = "The Password and Confirm Password do not match.";
-        } elseif (strlen($c_pwd) < 8) {
-            $action_err = "Password must be at least 8 characters long.";
-        } elseif (!preg_match('/[A-Za-z]/', $c_pwd) || !preg_match('/\d/', $c_pwd)) {
-            $action_err = "Password must contain at least one letter and one number.";
+        } elseif (strlen($c_pwd) < 6) {
+            $action_err = "Password must be at least 6 characters.";
         } else {
             // Reject duplicate email (UNIQUE INDEX on customers.email)
             $check = $pdo->prepare("SELECT customer_id FROM customers WHERE email = ? LIMIT 1");
@@ -759,10 +757,8 @@
             $action_err = "Please fill in both password fields, or leave both blank to keep the current password.";
         } elseif ($changing_pw && $c_pwd !== $c_pwd_conf) {
             $action_err = "The Password and Confirm Password do not match.";
-        } elseif ($changing_pw && strlen($c_pwd) < 8) {
-            $action_err = "Password must be at least 8 characters long.";
-        } elseif ($changing_pw && (!preg_match('/[A-Za-z]/', $c_pwd) || !preg_match('/\d/', $c_pwd))) {
-            $action_err = "Password must contain at least one letter and one number.";
+        } elseif ($changing_pw && strlen($c_pwd) < 6) {
+            $action_err = "Password must be at least 6 characters.";
         } else {
             // Confirm the customer exists
             $check = $pdo->prepare("SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1");
@@ -779,7 +775,34 @@
                 if ($dup->fetchColumn()) {
                     $action_err = "Another customer already uses that email address.";
                 } else {
-                    try {
+                    /* ─────────────────────────────────────────────────
+                       Prevent reuse of the customer's CURRENT password
+                       ─────────────────────────────────────────────────
+                       Only enforced when the admin is actually setting
+                       a new password ($changing_pw). We pull the stored
+                       bcrypt hash from `users` and compare via
+                       password_verify() — never against plaintext. Any
+                       password the customer used BEFORE the current one
+                       is not tracked, so older passwords stay reusable.
+                       The check runs BEFORE the transaction so a
+                       rejected attempt never touches the database.    */
+                    $pwReuseErr = '';
+                    if ($changing_pw) {
+                        $hStmt = $pdo->prepare("
+                            SELECT password_hash FROM users
+                            WHERE customer_id = ? AND role = 'Customer' LIMIT 1
+                        ");
+                        $hStmt->execute([$c_id]);
+                        $currentHash = $hStmt->fetchColumn();
+                        if ($currentHash && password_verify($c_pwd, $currentHash)) {
+                            $pwReuseErr = "New password must be different from the customer's current password.";
+                        }
+                    }
+
+                    if ($pwReuseErr !== '') {
+                        $action_err = $pwReuseErr;
+                    } else {
+                        try {
                         $pdo->beginTransaction();
                         $pdo->prepare("
                             UPDATE customers
@@ -833,6 +856,7 @@
                         $pdo->rollBack();
                         $action_err = "Could not update customer: " . htmlspecialchars($e->getMessage());
                     }
+                    } // end: else of $pwReuseErr check
                 }
             }
         }
@@ -1753,7 +1777,78 @@
                 padding: 2rem; max-width: 480px; width: 100%;
                 box-shadow: 0 20px 60px rgba(0,0,0,0.3);
                 animation: modalIn 0.3s ease-out;
+                /* Constrain modal so very tall forms don't dominate
+                   the viewport — header/footer stay anchored, body
+                   scrolls within. */
+                max-height: calc(100vh - 2rem);
+                display: flex;
+                flex-direction: column;
             }
+            .modal > h2,
+            .modal > .modal-subtitle { flex-shrink: 0; }
+            .modal > form {
+                overflow-y: auto;
+                overflow-x: hidden;
+                /* Branded thin scrollbar */
+                scrollbar-width: thin;
+                scrollbar-color: rgba(0,119,182,0.35) transparent;
+                /* Reserve room for the scrollbar so content doesn't
+                   shift when it appears */
+                margin-right: -0.5rem;
+                padding-right: 0.5rem;
+            }
+            .modal > form::-webkit-scrollbar { width: 6px; }
+            .modal > form::-webkit-scrollbar-thumb {
+                background: rgba(0,119,182,0.30);
+                border-radius: 3px;
+            }
+            .modal > form::-webkit-scrollbar-thumb:hover { background: rgba(0,119,182,0.55); }
+
+            /* Field-group section header inside the modal form */
+            .modal-section {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 0.4rem 0 0.9rem;
+                font-size: 0.72rem;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: #8a96a3;
+                font-weight: 700;
+            }
+            .modal-section:not(:first-child) { margin-top: 1.1rem; }
+            .modal-section::after {
+                content: "";
+                flex: 1;
+                height: 1px;
+                background: linear-gradient(to right, #e3e8ee, transparent);
+            }
+            .modal-section i { color: var(--primary); font-size: 0.9rem; }
+
+            /* Sticky action bar pinned to the bottom of the scrollable form */
+            .modal > form > .modal-actions {
+                position: sticky;
+                bottom: 0;
+                background: white;
+                padding: 0.9rem 0 0.2rem;
+                margin-top: 0.8rem;
+                border-top: 1px solid #eef1f5;
+                z-index: 2;
+            }
+
+            /* Inline password-strength feedback under the password input
+               (separate from the existing confirm-password match feedback) */
+            .pw-strength-feedback {
+                display: block;
+                margin-top: 6px;
+                font-size: 0.78rem;
+                min-height: 1em;
+                line-height: 1.2;
+            }
+            .pw-strength-feedback.pw-bad { color: #e74c3c; }
+            .pw-strength-feedback.pw-ok  { color: #27ae60; }
+            .pw-strength-feedback.pw-ok::before  { content: "\f00c"; font-family: "Font Awesome 5 Free"; font-weight: 900; margin-right: 5px; }
+            .pw-strength-feedback.pw-bad::before { content: "\f071"; font-family: "Font Awesome 5 Free"; font-weight: 900; margin-right: 5px; }
             @keyframes modalIn { from { opacity: 0; transform: translateY(20px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes fadeIn  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
             .modal h2 {
@@ -3145,7 +3240,7 @@
                         <div class="modal-actions">
                             <button type="button" class="btn-cancel" onclick="closeModal('reasonModal')">Cancel</button>
                             <button type="button" class="btn-submit" onclick="submitReasonForm()">
-                                <i class="fas fa-ban"></i> Confirm
+                                <i></i> Confirm
                             </button>
                         </div>
                     </div>
@@ -3532,6 +3627,9 @@
                         <form method="POST" action="dashboard.php?view=customers"
                               id="addCustomerForm" onsubmit="return validateCustomerForm(this, false)" novalidate>
                             <input type="hidden" name="action" value="add_customer">
+
+                            <div class="modal-section"><i class="fas fa-id-card"></i> Personal Information</div>
+
                             <div class="form-group">
                                 <label for="ac_full_name">Full Name</label>
                                 <input type="text" id="ac_full_name" name="full_name" required maxlength="255"
@@ -3547,12 +3645,15 @@
                                 <input type="text" id="ac_contact" name="contact_number" maxlength="15"
                                     placeholder="e.g. 09171234567">
                             </div>
+
+                            <div class="modal-section"><i class="fas fa-key"></i> Login Credentials</div>
+
                             <div class="form-group">
                                 <label for="ac_password">Password</label>
                                 <div class="password-field">
                                     <input type="password" id="ac_password" name="password"
-                                        required minlength="8" autocomplete="new-password"
-                                        placeholder="At least 8 characters">
+                                        required minlength="6" autocomplete="new-password"
+                                        placeholder="At least 6 characters">
                                     <button type="button" class="password-toggle"
                                             data-target="ac_password"
                                             aria-label="Show password" aria-pressed="false"
@@ -3560,12 +3661,13 @@
                                         <i class="fas fa-eye" aria-hidden="true"></i>
                                     </button>
                                 </div>
+                                <small class="pw-strength-feedback" id="ac_password_feedback" aria-live="polite"></small>
                             </div>
                             <div class="form-group">
                                 <label for="ac_confirm_password">Confirm Password</label>
                                 <div class="password-field">
                                     <input type="password" id="ac_confirm_password" name="confirm_password"
-                                        required minlength="8" autocomplete="new-password"
+                                        required minlength="6" autocomplete="new-password"
                                         placeholder="Re-enter password">
                                     <button type="button" class="password-toggle"
                                             data-target="ac_confirm_password"
@@ -3578,7 +3680,7 @@
                             </div>
                             <div class="modal-info">
                                 <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:6px;"></i>
-                                Use at least 8 characters with both letters and numbers. Passwords are securely hashed before being stored.
+                                Use at least 6 characters. Passwords are securely hashed before being stored.
                             </div>
                             <div class="modal-actions">
                                 <button type="button" class="btn-cancel" onclick="closeModal('addCustomerModal')">Cancel</button>
@@ -3600,6 +3702,9 @@
                               id="editCustomerForm" onsubmit="return validateCustomerForm(this, true)" novalidate>
                             <input type="hidden" name="action" value="edit_customer">
                             <input type="hidden" name="customer_id" id="ec_id">
+
+                            <div class="modal-section"><i class="fas fa-id-card"></i> Personal Information</div>
+
                             <div class="form-group">
                                 <label for="ec_full_name">Full Name</label>
                                 <input type="text" id="ec_full_name" name="full_name" required maxlength="255">
@@ -3612,11 +3717,14 @@
                                 <label for="ec_contact">Contact Number</label>
                                 <input type="text" id="ec_contact" name="contact_number" maxlength="15">
                             </div>
+
+                            <div class="modal-section"><i class="fas fa-key"></i> Login Credentials</div>
+
                             <div class="form-group">
                                 <label for="ec_password">New Password <span style="color:#999;font-weight:400;">(optional)</span></label>
                                 <div class="password-field">
                                     <input type="password" id="ec_password" name="password"
-                                        minlength="8" autocomplete="new-password"
+                                        minlength="6" autocomplete="new-password"
                                         placeholder="Leave blank to keep current">
                                     <button type="button" class="password-toggle"
                                             data-target="ec_password"
@@ -3625,12 +3733,13 @@
                                         <i class="fas fa-eye" aria-hidden="true"></i>
                                     </button>
                                 </div>
+                                <small class="pw-strength-feedback" id="ec_password_feedback" aria-live="polite"></small>
                             </div>
                             <div class="form-group">
                                 <label for="ec_confirm_password">Confirm New Password</label>
                                 <div class="password-field">
                                     <input type="password" id="ec_confirm_password" name="confirm_password"
-                                        minlength="8" autocomplete="new-password"
+                                        minlength="6" autocomplete="new-password"
                                         placeholder="Re-enter new password">
                                     <button type="button" class="password-toggle"
                                             data-target="ec_confirm_password"
@@ -3643,7 +3752,7 @@
                             </div>
                             <div class="modal-info">
                                 <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:6px;"></i>
-                                To change the password, fill in BOTH fields (min. 8 characters with letters &amp; numbers). Otherwise leave both blank.
+                                To change the password, fill in BOTH fields (at least 6 characters). Otherwise leave both blank.
                             </div>
                             <div class="modal-actions">
                                 <button type="button" class="btn-cancel" onclick="closeModal('editCustomerModal')">Cancel</button>
@@ -3680,6 +3789,8 @@
                         document.getElementById('ec_confirm_password').value = '';
                         var fb = document.getElementById('ec_pw_feedback');
                         if (fb) { fb.textContent = ''; fb.className = 'pw-feedback'; }
+                        var sfb = document.getElementById('ec_password_feedback');
+                        if (sfb) { sfb.textContent = ''; sfb.className = 'pw-strength-feedback'; }
                         openModal('editCustomerModal');
                     }
 
@@ -3769,38 +3880,88 @@
                     wireLiveMatch('ac_password', 'ac_confirm_password', 'ac_pw_feedback', false);
                     wireLiveMatch('ec_password', 'ec_confirm_password', 'ec_pw_feedback', true);
 
+                    /* ─────────────────────────────────────────────────────
+                       Live password-strength feedback
+                       ─────────────────────────────────────────────────────
+                       Mirrors the real-time check used in signup.php:
+                       under 6 chars  -> red "Password must be at least 6 characters."
+                       6 chars or more -> green "✓ Strong enough"
+                       In optional mode (edit), an empty value clears the
+                       message so leaving the field blank stays valid.   */
+                    function wireLiveStrength(pwdId, feedbackId, optional) {
+                        var pwd = document.getElementById(pwdId);
+                        var fb  = document.getElementById(feedbackId);
+                        if (!pwd || !fb) return;
+                        function evaluate() {
+                            var v = pwd.value;
+                            if (v.length === 0) {
+                                fb.textContent = '';
+                                fb.className   = 'pw-strength-feedback';
+                                pwd.setCustomValidity('');
+                                return;
+                            }
+                            if (v.length < 6) {
+                                fb.textContent = 'Password must be at least 6 characters.';
+                                fb.className   = 'pw-strength-feedback pw-bad';
+                                pwd.setCustomValidity('Password must be at least 6 characters.');
+                            } else {
+                                fb.textContent = 'Strong enough';
+                                fb.className   = 'pw-strength-feedback pw-ok';
+                                pwd.setCustomValidity('');
+                            }
+                        }
+                        pwd.addEventListener('input', evaluate);
+                    }
+                    wireLiveStrength('ac_password', 'ac_password_feedback', false);
+                    wireLiveStrength('ec_password', 'ec_password_feedback', true);
+
                     /* Form-level guard: re-evaluate at submit time and block
                        the request if the passwords don't match. The server
-                       enforces the same rules — this is just a UX helper. */
+                       enforces the same rules — this is just a UX helper.
+                       Validation messages are surfaced INLINE (matching the
+                       signup.php pattern) instead of using alert(). */
                     function validateCustomerForm(form, isEdit) {
                         var pwd  = form.querySelector('input[name="password"]');
                         var conf = form.querySelector('input[name="confirm_password"]');
                         if (!pwd || !conf) return true;
 
                         var p = pwd.value, c = conf.value;
+                        var strengthFb = form.querySelector('.pw-strength-feedback');
+                        var matchFb    = form.querySelector('.pw-feedback');
+                        var firstInvalid = null;
+
+                        function setBad(el, msg) {
+                            if (!el) return;
+                            el.textContent = msg;
+                            el.className   = el.className.replace(/\s*pw-(ok|bad)\b/g, '') + ' pw-bad';
+                        }
 
                         if (isEdit && p === '' && c === '') {
                             return true; // keep current password
                         }
                         if (p === '' || c === '') {
-                            alert(isEdit
-                                ? 'Please fill in both password fields, or leave both blank to keep the current password.'
-                                : 'Please enter and confirm a password.');
-                            (p === '' ? pwd : conf).focus();
+                            if (p === '') {
+                                setBad(strengthFb, isEdit
+                                    ? 'Fill in both password fields, or leave both blank.'
+                                    : 'Please enter a password.');
+                                firstInvalid = pwd;
+                            }
+                            if (c === '') {
+                                setBad(matchFb, isEdit
+                                    ? 'Fill in both password fields, or leave both blank.'
+                                    : 'Please confirm the password.');
+                                firstInvalid = firstInvalid || conf;
+                            }
+                            if (firstInvalid) firstInvalid.focus();
                             return false;
                         }
-                        if (p.length < 8) {
-                            alert('Password must be at least 8 characters long.');
-                            pwd.focus();
-                            return false;
-                        }
-                        if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) {
-                            alert('Password must contain at least one letter and one number.');
+                        if (p.length < 6) {
+                            setBad(strengthFb, 'Password must be at least 6 characters.');
                             pwd.focus();
                             return false;
                         }
                         if (p !== c) {
-                            alert('The Password and Confirm Password do not match.');
+                            setBad(matchFb, 'Passwords do not match.');
                             conf.focus();
                             return false;
                         }
@@ -3829,6 +3990,10 @@
                                 modal.querySelectorAll('.pw-feedback').forEach(function (fb) {
                                     fb.textContent = '';
                                     fb.className   = 'pw-feedback';
+                                });
+                                modal.querySelectorAll('.pw-strength-feedback').forEach(function (fb) {
+                                    fb.textContent = '';
+                                    fb.className   = 'pw-strength-feedback';
                                 });
                             }
                         });

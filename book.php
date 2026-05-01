@@ -1127,7 +1127,7 @@ if ($initialSliderBranchId !== null) {
                                 <label for="typeDayTour" class="tour-type-lbl <?= $dayBooked ? 'is-booked' : '' ?>">
                                     <div class="tt-icon"><i class="fas fa-sun"></i></div>
                                     <span class="tt-name">Day Tour</span>
-                                    <span class="tt-price">₱900</span>
+                                    <span class="tt-price">₱9,000</span>
                                     <?php if ($dayBooked): ?>
                                         <span class="tt-booked-tag">Booked</span>
                                     <?php else: ?>
@@ -1147,7 +1147,7 @@ if ($initialSliderBranchId !== null) {
                                 <label for="typeOvernight" class="tour-type-lbl <?= $nightBooked ? 'is-booked' : '' ?>">
                                     <div class="tt-icon"><i class="fas fa-moon"></i></div>
                                     <span class="tt-name">Overnight</span>
-                                    <span class="tt-price">₱1,000</span>
+                                    <span class="tt-price">₱10,000</span>
                                     <?php if ($nightBooked): ?>
                                         <span class="tt-booked-tag">Booked</span>
                                     <?php else: ?>
@@ -1170,7 +1170,7 @@ if ($initialSliderBranchId !== null) {
                         <span class="book-price-label">Total Amount</span>
                         <span class="book-price-note">Inclusive of all fees</span>
                     </div>
-                    <div class="book-price-amount" id="priceDisplay">₱900</div>
+                    <div class="book-price-amount" id="priceDisplay">₱9000</div>
                 </div>
                 <?php endif; ?>
 
@@ -1191,7 +1191,7 @@ if ($initialSliderBranchId !== null) {
 
 <script>
 // Live price update
-const priceMap     = { Day: '₱900', Overnight: '₱1,000' };
+const priceMap     = { Day: '₱9000', Overnight: '₱10,000' };
 const priceDisplay = document.getElementById('priceDisplay');
 
 document.querySelectorAll('input[name="type"]').forEach(radio => {

@@ -7,7 +7,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $date      = $_POST['check_in'];
     $type      = $_POST['type'];
 
-    $amount_map = ['Day' => 900, 'Overnight' => 1000]; // in PHP (x100 for centavos)
+    $amount_map = ['Day' => 9000, 'Overnight' => 10000]; // in PHP (x100 for centavos)
     $amount = $amount_map[$type] * 100; // PayMongo expects centavos
 
     $url = "https://api.paymongo.com/v1/checkout_sessions";

@@ -2,9 +2,9 @@
 include 'header.php';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-define('COMMENT_MIN_CHARS', 20);   // must type at least 20 characters
+define('COMMENT_MIN_CHARS', 1);   // must type at least 20 characters
 define('COMMENT_MAX_CHARS', 50);  // hard cap at 500 characters
-define('OCCUPATION_MAX_CHARS', 20);
+define('OCCUPATION_MAX_CHARS', 15);
 define('NAME_MAX_CHARS', 60);
 
 // ─── Form Errors Array ────────────────────────────────────────────────────────
