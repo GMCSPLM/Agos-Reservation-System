@@ -1853,7 +1853,12 @@
             @keyframes fadeIn  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
             .modal h2 {
                 font-size: 1.25rem; color: var(--primary-dark); margin: 0 0 0.4rem;
-                display: flex; align-items: center; gap: 10px;
+                display: flex; align-items: center; gap: 8px;
+                flex-wrap: wrap;
+            }
+            .modal h2 span { word-break: break-word; }
+            @media (max-width: 480px) {
+                .modal h2 { font-size: 1.05rem; gap: 6px; }
             }
             .modal h2 i { color: var(--primary); }
             .modal .modal-subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.2rem; }
