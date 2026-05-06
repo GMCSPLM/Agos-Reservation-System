@@ -88,22 +88,36 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 <style>
     /* Phone row: narrow code selector + wide number input */
-    .phone-row {
-        display: flex;
-        flex-direction: row;
-        gap: 10px;
-        align-items: stretch;
-        width: 100%;
-    }
+.phone-row {
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
+}
+.phone-row select {
+    flex: 0 0 120px;
+    width: 120px !important;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+.phone-row input {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 0 !important;
+    box-sizing: border-box;
+}
+@media (max-width: 380px) {
+    .phone-row { gap: 6px; }
     .phone-row select {
-        flex: 0 0 120px;
-        width: 120px !important;
-        cursor: pointer;
+        flex: 0 0 95px;
+        width: 95px !important;
+        font-size: 0.82rem;
+        padding-left: 6px;
+        padding-right: 6px;
     }
-    .phone-row input {
-        flex: 1;
-        width: auto !important;
-    }
+}
 
     /* ── Password eye button: locked in place ──────────────────
        The bug was the global `button:hover { transform: translateY(-2px) }`
