@@ -1,6 +1,9 @@
 <?php 
 include 'header.php';
-if (!isset($_SESSION['user_id'])) echo "<script>window.location='login.php';</script>";
+if (!isset($_SESSION['user_id'])) {
+    echo "<script>window.location='login.php';</script>";
+    exit;
+}
 
 $bookingError = null;
 

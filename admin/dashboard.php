@@ -2,7 +2,8 @@
     include '../db.php';
 
     if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'Admin') {
-        die("Access Denied");
+        header('Location: ../login.php');
+        exit;
     }
 
     // =========================================================================
@@ -2608,12 +2609,12 @@
 
         <!-- Overlay behind sidebar -->
         <div class="sidebar-overlay" id="sidebarOverlay"></div>
-        <nav class="sidebar" id="adminSidebar">
-    <button class="sidebar-close" id="sidebarClose" aria-label="Close menu">
-        <i class="fas fa-times"></i>
-    </button>
 
-        <nav class="sidebar">
+        <!-- Sidebar — single nav, properly closed before .main-content -->
+        <nav class="sidebar" id="adminSidebar">
+            <button class="sidebar-close" id="sidebarClose" aria-label="Close menu">
+                <i class="fas fa-times"></i>
+            </button>
             <div class="brand">
                 <i class="fas fa-water" style="color: var(--secondary);"></i> CheckMates
             </div>
@@ -2660,6 +2661,7 @@
                 </li>
             </ul>
         </nav>
+        <!-- END Sidebar -->
 
         <div class="main-content">
 
