@@ -1295,6 +1295,7 @@
     <html lang="en">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Admin Panel | CheckMates</title>
         <link rel="stylesheet" href="../css/style.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -1900,7 +1901,7 @@
                 transition: filter 0.2s, transform 0.15s, box-shadow 0.2s;
                 box-shadow: 0 3px 10px rgba(0,119,182,0.3);
                 font-family: inherit;
-                display: inline-flex; align-items: center; gap: 6px;
+                display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
             }
             .btn-submit:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 5px 15px rgba(0,119,182,0.4); }
 
@@ -2509,9 +2510,108 @@
                 border-radius: 10px; color: #666;
                 font-size: 0.85rem; text-align: center;
             }
+
+            /* ══ RESPONSIVE SIDEBAR ══ */
+            html, body { overflow-x: hidden; }
+
+            .mob-topbar {
+                display: none;
+                position: fixed; top: 0; left: 0; right: 0; height: 56px;
+                background: rgba(255,255,255,0.97);
+                backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+                z-index: 1200; align-items: center; justify-content: space-between;
+                padding: 0 1rem; box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            }
+            .mob-brand { font-size: 1.1rem; font-weight: 700; color: var(--primary-dark); display: flex; align-items: center; gap: 8px; }
+            .mob-hamburger {
+                display: flex; flex-direction: column; justify-content: center; align-items: center;
+                gap: 5px; width: 40px; height: 40px; background: none; border: none;
+                cursor: pointer; border-radius: 10px; padding: 6px; transition: background 0.2s; flex-shrink: 0;
+            }
+            .mob-hamburger:hover { background: rgba(0,119,182,0.08); box-shadow: none; transform: none; }
+            .mob-hamburger span { display: block; width: 22px; height: 2px; background: var(--primary-dark); border-radius: 2px; transition: all 0.3s ease; }
+            .mob-hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+            .mob-hamburger.open span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+            .mob-hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+            .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1299; cursor: pointer; }
+            .sidebar-overlay.open { display: block; }
+
+            .sidebar-close {
+                display: none; position: absolute; top: 14px; right: 14px;
+                width: 32px; height: 32px; background: rgba(0,119,182,0.08);
+                border: none; border-radius: 50%; color: var(--primary-dark);
+                font-size: 0.9rem; cursor: pointer; align-items: center; justify-content: center;
+                transition: background 0.2s, color 0.2s; flex-shrink: 0;
+            }
+            .sidebar-close:hover { background: rgba(239,71,111,0.12); color: #ef476f; box-shadow: none; transform: none; }
+
+            @media (max-width: 960px) {
+                .mob-topbar  { display: flex; }
+                body         { display: block !important; padding-top: 56px; }
+                .sidebar {
+                    position: fixed !important; top: 0; left: 0;
+                    height: 100vh; z-index: 1300; width: 260px !important;
+                    transform: translateX(-100%);
+                    transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+                    padding-top: 64px; overflow-y: auto;
+                }
+                .sidebar.open { transform: translateX(0); box-shadow: 6px 0 30px rgba(0,0,0,0.2); }
+                .sidebar-close { display: flex; }
+                .main-content { margin-left: 0 !important; padding: 1.5rem 1.2rem; width: 100%; }
+                .charts-grid  { grid-template-columns: 1fr !important; }
+                .stats-grid   { grid-template-columns: repeat(2,1fr) !important; }
+                .branch-admin-grid { grid-template-columns: repeat(2,1fr) !important; }
+                .chart-container { height: 240px !important; }
+            }
+
+            @media (max-width: 640px) {
+                .main-content { padding: 1rem 0.75rem; }
+                .glass-panel  { padding: 1.2rem 0.9rem; border-radius: 14px; }
+                h1            { font-size: 1.4rem !important; }
+                .stats-grid   { grid-template-columns: repeat(2,1fr) !important; }
+                .branch-admin-grid { grid-template-columns: 1fr !important; }
+                .maint-toggle-card { flex-direction: column; align-items: flex-start; gap: 0.8rem; }
+                .feedback-grid { grid-template-columns: 1fr !important; }
+                .pagination   { flex-wrap: wrap; justify-content: center; gap: 4px; }
+                .page-info    { width: 100%; text-align: center; margin: 0; }
+                .chart-container { height: 200px !important; }
+                .chart-card-header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+                .modal-actions { flex-direction: column-reverse; gap: 8px; }
+                .btn-cancel, .btn-submit { width: 100%; text-align: center; justify-content: center; }
+                .af-header    { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+                .customers-toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+                .action-buttons { flex-wrap: wrap; gap: 6px; }
+            }
+
+            @media (max-width: 400px) {
+                .main-content { padding: 0.75rem 0.6rem; }
+                .glass-panel  { padding: 0.9rem 0.7rem; }
+                h1            { font-size: 1.2rem !important; }
+                .stats-grid   { grid-template-columns: 1fr !important; }
+                .mob-brand    { font-size: 0.95rem; }
+                .stat-card    { padding: 1rem; }
+            }
         </style>
     </head>
     <body>
+        <!-- Mobile top bar -->
+        <div class="mob-topbar" id="mobTopbar">
+            <div class="mob-brand">
+                <i class="fas fa-water" style="color:var(--secondary);"></i> CheckMates
+                <span style="font-size:0.75rem;font-weight:500;color:var(--secondary);letter-spacing:1px;">ADMIN</span>
+            </div>
+            <button class="mob-hamburger" id="mobHamburger" aria-label="Toggle navigation">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+
+        <!-- Overlay behind sidebar -->
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+        <nav class="sidebar" id="adminSidebar">
+    <button class="sidebar-close" id="sidebarClose" aria-label="Close menu">
+        <i class="fas fa-times"></i>
+    </button>
 
         <nav class="sidebar">
             <div class="brand">
@@ -3151,15 +3251,16 @@
 
                                     <!-- Delete cover image -->
                                     <form method="POST" action="dashboard.php?view=branches" class="row"
-                                        onsubmit="return confirm('Remove the uploaded cover image for <?= htmlspecialchars(addslashes($b['branch_name'])) ?>? The default placeholder will be shown instead.');">
+                                        onsubmit="return false;">
                                         <input type="hidden" name="action"    value="delete_branch_image">
                                         <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
                                         <p class="label">&nbsp;</p>
-                                        <button type="submit" class="btn-mini btn-delete-img <?= $hasImage ? '' : 'disabled' ?>"
-                                                <?= $hasImage ? '' : 'disabled' ?>
-                                                title="<?= $hasImage ? 'Delete uploaded cover image' : 'No uploaded image to delete' ?>">
-                                            <i class="fas fa-trash"></i> Delete Image
-                                        </button>
+                                        <button type="button" class="btn-mini btn-delete-img <?= $hasImage ? '' : 'disabled' ?>"
+                                        <?= $hasImage ? '' : 'disabled' ?>
+                                        title="<?= $hasImage ? 'Delete uploaded cover image' : 'No uploaded image to delete' ?>"
+                                        onclick="openDeleteImageModal(this.closest('form'), '<?= htmlspecialchars(addslashes($b['branch_name'])) ?>')">
+                                    <i class="fas fa-trash"></i> Delete Image
+                                </button>
                                     </form>
                                 </div>
 
@@ -3208,12 +3309,12 @@
                                                     </form>
                                                     <!-- Delete this gallery image -->
                                                     <form method="POST" action="dashboard.php?view=branches"
-                                                        onsubmit="return confirm('Delete this gallery image? This cannot be undone.');"
+                                                        onsubmit="return false;"
                                                         style="margin:0;display:inline;">
                                                         <input type="hidden" name="action"    value="delete_gallery_image">
                                                         <input type="hidden" name="image_id"  value="<?= $g['image_id'] ?>">
                                                         <input type="hidden" name="branch_id" value="<?= $b['branch_id'] ?>">
-                                                        <button type="submit" class="gt-btn gt-delete" title="Delete this image">
+                                                        <button type="button" class="gt-btn gt-delete" title="Delete this image" onclick="openDeleteGalleryModal(this.closest('form'))">
                                                             <i class="fas fa-trash"></i>
                                                         </button>
                                                     </form>
@@ -3275,6 +3376,43 @@
                             </button>
                         </div>
                     </div>
+                    <div class="modal-overlay" id="deleteImageModal" onclick="if(event.target===this)closeModal('deleteImageModal')">
+                    <div class="modal">
+                        <h2><i class="fas fa-trash" style="color:#e74c3c;"></i> Delete Cover Image</h2>
+                        <p class="modal-subtitle">Remove the uploaded cover image for <strong id="deleteImageBranchName"></strong>? The default placeholder will be shown instead.</p>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('deleteImageModal')">Cancel</button>
+                            <button type="button" class="btn-submit" style="background:#e74c3c;" onclick="submitDeleteImage()">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-overlay" id="confirmAvailModal" onclick="if(event.target===this)closeModal('confirmAvailModal')">
+                    <div class="modal">
+                        <h2><i class="fas fa-check-circle" style="color:#27ae60;"></i> Mark <span id="confirmAvailBranchName"></span> Available</h2>
+                        <p class="modal-subtitle">This will mark the branch as available again. Customers will be able to book this branch.</p>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('confirmAvailModal')">Cancel</button>
+                            <button type="button" class="btn-submit" style="background:#27ae60;" onclick="submitConfirmAvail()">
+                                <i class="fas fa-check"></i> Confirm
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-overlay" id="deleteGalleryModal" onclick="if(event.target===this)closeModal('deleteGalleryModal')">
+                    <div class="modal">
+                        <h2><i class="fas fa-trash" style="color:#e74c3c;"></i> Delete Gallery Image</h2>
+                        <p class="modal-subtitle">Delete this gallery image? This cannot be undone.</p>
+                        <div class="modal-actions">
+                            <button type="button" class="btn-cancel" onclick="closeModal('deleteGalleryModal')">Cancel</button>
+                            <button type="button" class="btn-submit" style="background:#e74c3c;" onclick="submitDeleteGallery()">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <script>
@@ -3315,7 +3453,36 @@
                             return false;  // stop default submit; modal will resubmit after Confirm
                         }
                         // Going Unavailable -> Available: simple confirm
-                        return confirm("Mark " + branchName + " as available again?");
+                        _pendingAvailabilityForm = form;
+                        document.getElementById('confirmAvailBranchName').textContent = branchName;
+                        openModal('confirmAvailModal');
+                        return false;
+
+                        let _pendingDeleteImageForm  = null;
+                    function openDeleteImageModal(form, branchName) {
+                        _pendingDeleteImageForm = form;
+                        document.getElementById('deleteImageBranchName').textContent = branchName;
+                        openModal('deleteImageModal');
+                    }
+                    function submitDeleteImage() {
+                        closeModal('deleteImageModal');
+                        if (_pendingDeleteImageForm) _pendingDeleteImageForm.submit();
+                    }
+
+                    function submitConfirmAvail() {
+                        closeModal('confirmAvailModal');
+                        if (_pendingAvailabilityForm) _pendingAvailabilityForm.submit();
+                    }
+
+                    let _pendingDeleteGalleryForm = null;
+                    function openDeleteGalleryModal(form) {
+                        _pendingDeleteGalleryForm = form;
+                        openModal('deleteGalleryModal');
+                    }
+                    function submitDeleteGallery() {
+                        closeModal('deleteGalleryModal');
+                        if (_pendingDeleteGalleryForm) _pendingDeleteGalleryForm.submit();
+                    }
                     }
                     function submitReasonForm() {
                         if (!_pendingAvailabilityForm) return;
@@ -4462,6 +4629,40 @@
             <?php endif; ?>
 
         </div>
+            <script>
+                (function () {
+                    var sidebar   = document.getElementById('adminSidebar');
+                    var overlay   = document.getElementById('sidebarOverlay');
+                    var hamburger = document.getElementById('mobHamburger');
+                    var closeBtn  = document.getElementById('sidebarClose');
 
+                    function openSidebar()  {
+                        sidebar.classList.add('open');
+                        overlay.classList.add('open');
+                        hamburger.classList.add('open');
+                        document.body.style.overflow = 'hidden';
+                    }
+                    function closeSidebar() {
+                        sidebar.classList.remove('open');
+                        overlay.classList.remove('open');
+                        hamburger.classList.remove('open');
+                        document.body.style.overflow = '';
+                    }
+
+                    if (hamburger) hamburger.addEventListener('click', function () {
+                        sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+                    });
+                    if (overlay)  overlay.addEventListener('click', closeSidebar);
+                    if (closeBtn) closeBtn.addEventListener('click', closeSidebar);
+
+                    sidebar.querySelectorAll('a').forEach(function (a) {
+                        a.addEventListener('click', closeSidebar);
+                    });
+
+                    document.addEventListener('keydown', function (e) {
+                        if (e.key === 'Escape') closeSidebar();
+                    });
+                })();
+        </script>                        
     </body>
     </html>
